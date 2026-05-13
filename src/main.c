@@ -2,7 +2,7 @@
 
 /*
     MEGAMANDALA MD
-    v0.3 - procedural scene engine
+    v0.4 - BOTOP TA DE OLHO
     SGDK / Marsdev safe build
 
     Regras:
@@ -39,7 +39,8 @@
 #define SCENE_TUNNEL        2
 #define SCENE_GLITCH        3
 #define SCENE_BREATH        4
-#define SCENE_COUNT         5
+#define SCENE_EYE           5
+#define SCENE_COUNT         6
 
 static u16 frameCounter = 0;
 static u16 sceneTimer = 0;
@@ -132,7 +133,6 @@ static const u32 tile_scan[8] =
 
 /* ------------------------------------------------------------ */
 /* Paletas Mega Drive: formato SGDK/VDP 0000 BBB0 GGG0 RRR0     */
-/* Evitando branco puro.                                        */
 /* ------------------------------------------------------------ */
 
 static const u16 pal0Text[16] =
@@ -266,9 +266,7 @@ static void fillRect(VDPPlane plane, u16 x, u16 y, u16 w, u16 h, u16 tile, u16 p
     for (iy = 0; iy < h; iy++)
     {
         for (ix = 0; ix < w; ix++)
-        {
             putTile(plane, x + ix, y + iy, tile, pal, prio, FALSE, FALSE);
-        }
     }
 }
 
@@ -323,10 +321,15 @@ static void drawStaticTexts(void)
         VDP_drawText("O SINAL ESTA VIVO", 11, 4);
         VDP_drawText("GLITCH CONTROLADO", 10, 23);
     }
-    else
+    else if (currentScene == SCENE_BREATH)
     {
         VDP_drawText("BOTOP OBSERVA", 13, 4);
         VDP_drawText("CALMA DENTRO DO RUIDO", 8, 23);
+    }
+    else
+    {
+        VDP_drawText("BOTOP TA DE OLHO", 12, 4);
+        VDP_drawText("NAO DESLIGUE O SONHO", 9, 23);
     }
 }
 
@@ -372,6 +375,75 @@ static void drawMandalaCore(u16 f)
     putTile(BG_A, (u16)(cx+1), (u16)cy,     TILE_BAR_H, PAL1, TRUE, FALSE, FALSE);
     putTile(BG_A, (u16)cx,     (u16)(cy-1), TILE_BAR_V, PAL1, TRUE, FALSE, FALSE);
     putTile(BG_A, (u16)cx,     (u16)(cy+1), TILE_BAR_V, PAL1, TRUE, FALSE, FALSE);
+}
+
+static void drawEyeScene(u16 f)
+{
+    s16 cx = 20;
+    s16 cy = 14;
+    s16 i;
+    s16 d;
+    s16 top;
+    s16 bottom;
+    u16 pupil;
+    u16 pal;
+
+    if ((f & 3) != 0)
+        return;
+
+    fillRect(BG_A, 5, 7, 30, 14, TILE_EMPTY, PAL0, FALSE);
+
+    for (i = -13; i <= 13; i++)
+    {
+        d = i;
+        if (d < 0)
+            d = -d;
+
+        top = cy - 5 + (d >> 2);
+        bottom = cy + 5 - (d >> 2);
+
+        pal = ((i + (f >> 4)) & 1) ? PAL2 : PAL3;
+
+        putTile(BG_A, (u16)(cx + i), (u16)top,    TILE_DIAG_A, pal, TRUE, FALSE, FALSE);
+        putTile(BG_A, (u16)(cx + i), (u16)bottom, TILE_DIAG_B, pal, TRUE, FALSE, FALSE);
+
+        if ((i & 3) == 0)
+        {
+            putTile(BG_A, (u16)(cx + i), (u16)(cy - 1), TILE_SCAN, pal, TRUE, FALSE, FALSE);
+            putTile(BG_A, (u16)(cx + i), (u16)(cy + 1), TILE_SCAN, pal, TRUE, TRUE, FALSE);
+        }
+    }
+
+    pupil = 2 + ((f >> 5) & 3);
+
+    for (i = -3; i <= 3; i++)
+    {
+        if ((i >= -(s16)pupil) && (i <= (s16)pupil))
+        {
+            putTile(BG_A, (u16)(cx + i), (u16)cy, TILE_CROSS, PAL1, TRUE, FALSE, FALSE);
+            putTile(BG_A, (u16)(cx + i), (u16)(cy - 1), TILE_BAR_H, PAL1, TRUE, FALSE, FALSE);
+            putTile(BG_A, (u16)(cx + i), (u16)(cy + 1), TILE_BAR_H, PAL1, TRUE, TRUE, FALSE);
+        }
+    }
+
+    putTile(BG_A, (u16)cx,     (u16)cy,     TILE_DOT,   PAL1, TRUE, FALSE, FALSE);
+    putTile(BG_A, (u16)(cx-1), (u16)cy,     TILE_CROSS, PAL1, TRUE, FALSE, FALSE);
+    putTile(BG_A, (u16)(cx+1), (u16)cy,     TILE_CROSS, PAL1, TRUE, FALSE, FALSE);
+    putTile(BG_A, (u16)cx,     (u16)(cy-2), TILE_BAR_V, PAL1, TRUE, FALSE, FALSE);
+    putTile(BG_A, (u16)cx,     (u16)(cy+2), TILE_BAR_V, PAL1, TRUE, TRUE, FALSE);
+
+    if ((f & 31) == 0)
+    {
+        for (i = 0; i < 10; i++)
+        {
+            u16 gx = 6 + (rng16() % 28);
+            u16 gy = 8 + (rng16() % 12);
+            u16 gt = (rng16() & 1) ? TILE_NOISE : TILE_DOT;
+            u16 gp = (rng16() & 1) ? PAL2 : PAL3;
+
+            putTile(BG_A, gx, gy, gt, gp, TRUE, rng16() & 1, rng16() & 1);
+        }
+    }
 }
 
 static void drawTunnelPattern(void)
@@ -541,9 +613,13 @@ static void setupScene(u16 scene)
         drawTapetes();
         drawMandalaCore(frameCounter);
     }
-    else
+    else if (currentScene == SCENE_BREATH)
     {
         drawBreathScene(frameCounter);
+    }
+    else
+    {
+        drawEyeScene(frameCounter);
     }
 }
 
@@ -575,9 +651,13 @@ static void updateScene(void)
 
         drawGlitchBurst(frameCounter);
     }
-    else
+    else if (currentScene == SCENE_BREATH)
     {
         drawBreathScene(frameCounter);
+    }
+    else
+    {
+        drawEyeScene(frameCounter);
     }
 }
 
