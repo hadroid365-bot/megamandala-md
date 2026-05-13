@@ -1,0 +1,43 @@
+name: Build Mega Drive ROM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Install base dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget unzip make gcc g++ texinfo bison flex
+
+      - name: Install SGDK through Marsdev
+        run: |
+          git clone https://github.com/andwn/marsdev.git /tmp/marsdev
+          cd /tmp/marsdev
+          sudo make sgdk
+          sudo make install
+
+      - name: Build ROM
+        run: |
+          source /opt/toolchains/mars/mars.sh
+          make
+
+      - name: Prepare ROM artifact
+        run: |
+          mkdir -p artifact
+          cp out/rom.bin artifact/MEGAMANDALA_MD.bin
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: MEGAMANDALA_MD_ROM
+          path: artifact/
