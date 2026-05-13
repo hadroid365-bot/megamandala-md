@@ -2,14 +2,15 @@
 
 /*
     MEGAMANDALA MD
-    v0.7 - PSYCHO STATIC LOOPS
+    v0.8 - HYPNOTIC POLISH
     SGDK / Marsdev
 
-    - Sem tela do olho
+    - Sem olho
     - Sem deslizamento de BG
-    - Padrões psicodélicos tipo v0.2
-    - Loops por redraw de tilemap
-    - Flashs fullscreen por paleta
+    - Mais preto / mais respiro
+    - Psicodelia mais dirigida
+    - Flash em assinatura rítmica
+    - Glitch localizado
     - START / A / B / C avança cena
 */
 
@@ -158,22 +159,19 @@ static void setPalettes(u16 mode)
 static void pulseFlash(u16 f)
 {
     u16 p = f & 127;
-    u16 c;
+    u16 c = 0x0000;
 
-    if(p < 4)
+    /* assinatura rítmica: TA ... TA-TA ... TA ... FLASH */
+    if(p < 3)
         c = rgb(7,7,7);
-    else if(p == 8 || p == 9)
+    else if(p == 12 || p == 13)
         c = rgb(7,7,0);
-    else if(p == 16 || p == 17)
+    else if(p == 24 || p == 25 || p == 28 || p == 29)
         c = rgb(7,0,7);
-    else if(p == 24 || p == 25)
+    else if(p == 48 || p == 49)
         c = rgb(0,7,7);
-    else if((p >= 64) && (p < 70))
+    else if((p >= 96) && (p < 102))
         c = rgb(7,0,0);
-    else if((p >= 96) && (p < 100))
-        c = rgb(7,4,0);
-    else
-        c = 0x0000;
 
     pal0[0] = c;
     pal1[0] = c;
@@ -207,45 +205,38 @@ static void fillRect(VDPPlane plane, u16 x0, u16 y0, u16 w, u16 h, u16 tile, u16
             put(plane, x, y, tile, pal, 0);
 }
 
-static void drawTextCenter(const char *a)
+static void text1(const char *a, u16 x, u16 y)
 {
-    VDP_drawText(a, 7, 13);
+    VDP_drawText(a, x, y);
 }
 
-static void drawTextPair(const char *a, const char *b)
+static void dream(void)
 {
-    VDP_drawText(a, 12, 10);
-    VDP_drawText(b, 8, 16);
-}
-
-static void drawDreamLoop(void)
-{
-    u16 x, y;
-    u16 t;
-    u16 p = frame >> 2;
+    u16 x, y, p, t;
+    p = frame >> 3;
 
     clearPlanes();
 
-    for(y = 1; y < 11; y++)
+    for(y = 1; y < 10; y++)
     {
-        for(x = 0; x < 40; x++)
+        for(x = 2; x < 38; x++)
         {
-            if(((x + y + p) & 1) == 0)
+            if(((x + y + p) & 3) == 0)
                 t = T_NOISE;
-            else if(((x ^ y ^ p) & 3) == 0)
+            else if(((x ^ y ^ p) & 7) == 0)
                 t = T_GRID;
             else
                 t = T_SCAN;
 
-            put(BG_B, x, y, t, PAL1, 0);
+            put(BG_B, x, y, t, ((x + y) & 1) ? PAL1 : PAL2, 0);
         }
     }
 
-    for(y = 16; y < 26; y++)
+    for(y = 18; y < 26; y++)
     {
-        for(x = 0; x < 40; x++)
+        for(x = 2; x < 38; x++)
         {
-            if(((x * 3 + y + p) & 2) == 0)
+            if(((x * 3 + y + p) & 3) == 0)
                 t = T_NOISE;
             else
                 t = T_SCAN;
@@ -256,27 +247,26 @@ static void drawDreamLoop(void)
 
     put(BG_A, 18, 14, T_DOT, PAL3, 1);
     put(BG_A, 21, 14, T_DOT, PAL3, 1);
-    drawTextCenter("O CARTUCHO ESTA SONHANDO");
+    text1("O CARTUCHO ESTA SONHANDO", 7, 13);
 }
 
-static void drawWaveLoop(void)
+static void wave(void)
 {
-    u16 x, y;
-    u16 p = frame >> 2;
-    u16 t;
+    u16 x, y, p, t;
+    p = frame >> 3;
 
     clearPlanes();
 
-    for(y = 1; y < 26; y++)
+    for(y = 2; y < 26; y++)
     {
-        for(x = 3; x < 37; x++)
+        for(x = 4; x < 36; x++)
         {
-            if(y > 11 && y < 15)
+            if(y > 10 && y < 17)
                 continue;
 
-            if(((x + ((y + p) & 7)) & 3) == 0)
+            if(((x + ((y + p) & 7)) & 5) == 0)
                 t = T_BAR;
-            else if(((x ^ y ^ p) & 3) == 0)
+            else if(((x ^ y ^ p) & 7) == 0)
                 t = T_SCAN;
             else
                 t = T_NOISE;
@@ -285,13 +275,14 @@ static void drawWaveLoop(void)
         }
     }
 
-    drawTextPair("NAO HA FASE", "SO FREQUENCIA");
+    text1("NAO HA FASE", 14, 12);
+    text1("SO FREQUENCIA", 13, 15);
 }
 
-static void drawMatrixLoop(void)
+static void matrix(void)
 {
-    u16 x, y;
-    u16 p = frame >> 1;
+    u16 x, y, p;
+    p = frame >> 2;
 
     clearPlanes();
 
@@ -299,24 +290,23 @@ static void drawMatrixLoop(void)
     {
         for(x = 0; x < 40; x++)
         {
-            if(y > 10 && y < 15)
+            if(y > 9 && y < 18)
                 continue;
 
-            if(((x + p) & 1) == 0)
+            if(((x + p) & 7) == 0)
                 put(BG_B, x, y, T_BAR, PAL1, 0);
-            else if(((x + y + p) & 7) == 0)
+            else if(((x + y + p) & 31) == 0)
                 put(BG_B, x, y, T_DOT, PAL3, 0);
         }
     }
 
-    drawTextPair("A FREQUENCIA ESTA VIVA", "NAO DESLIGUE O SONHO");
+    text1("SINAL EM FLUXO", 10, 13);
 }
 
-static void drawOracleLoop(void)
+static void oracle(void)
 {
-    u16 x, y;
-    u16 p = frame >> 2;
-    u16 t;
+    u16 x, y, p, t;
+    p = frame >> 3;
 
     clearPlanes();
 
@@ -324,30 +314,37 @@ static void drawOracleLoop(void)
     {
         for(x = 1; x < 39; x++)
         {
-            if(y == 12 || y == 13 || y == 14)
+            if(y == 11 || y == 12 || y == 13 || y == 14 || y == 15)
                 continue;
 
-            if(((x * y + p) & 7) == 0)
+            if(((x * y + p) & 11) == 0)
                 t = T_CROSS;
-            else if(((x + y + p) & 1) == 0)
+            else if(((x + y + p) & 3) == 0)
                 t = T_SCAN;
             else
-                t = T_NOISE;
+                continue;
 
             put(BG_B, x, y, t, ((x ^ y) & 1) ? PAL1 : PAL3, 0);
         }
     }
 
-    VDP_drawText("NAO E BUG", 15, 10);
-    VDP_drawText("E ORACULO", 15, 16);
+    /* glitch localizado no canto */
+    if((frame & 7) == 0)
+    {
+        for(y = 2; y < 8; y++)
+            for(x = 2; x < 11; x++)
+                if(((x + y + frame) & 1) == 0)
+                    put(BG_A, x, y, T_NOISE, PAL2, 1);
+    }
+
+    text1("NAO E BUG", 15, 12);
+    text1("EH HADRONIC", 15, 15);
 }
 
-static void drawTunnelLoop(void)
+static void tunnel(void)
 {
-    u16 x, y;
-    u16 p = frame >> 2;
-    u16 dist;
-    u16 t;
+    u16 x, y, p, dist, t;
+    p = frame >> 3;
 
     clearPlanes();
 
@@ -355,7 +352,7 @@ static void drawTunnelLoop(void)
     {
         for(x = 2; x < 38; x++)
         {
-            if(y > 11 && y < 16)
+            if(y > 10 && y < 17)
                 continue;
 
             dist = (x > 20) ? x - 20 : 20 - x;
@@ -363,22 +360,22 @@ static void drawTunnelLoop(void)
 
             if(((dist + p) & 3) == 0)
                 t = T_LINE;
-            else if(((x ^ y ^ p) & 3) == 0)
-                t = T_DIAG_A;
+            else if(((x ^ y ^ p) & 7) == 0)
+                t = ((x + y) & 1) ? T_DIAG_A : T_DIAG_B;
             else
-                t = T_NOISE;
+                continue;
 
             put(BG_B, x, y, t, ((dist + p) & 1) ? PAL1 : PAL2, 0);
         }
     }
 
-    drawTextPair("TUNEL DE FREQUENCIA", "O RUIDO TEM MEMORIA");
+    text1("TUNEL DE FREQUENCIA", 10, 13);
 }
 
-static void drawRainLoop(void)
+static void rain(void)
 {
-    u16 x, y;
-    u16 p = frame >> 1;
+    u16 x, y, p;
+    p = frame >> 2;
 
     clearPlanes();
 
@@ -386,17 +383,18 @@ static void drawRainLoop(void)
     {
         for(x = 0; x < 40; x++)
         {
-            if(y > 10 && y < 16)
+            if(y > 8 && y < 19)
                 continue;
 
-            if(((x + p) & 3) == 0)
+            if(((x + p) & 7) == 0)
                 put(BG_B, x, y, T_DOT, PAL1, 0);
-            else if(((x + y + p) & 15) == 0)
+            else if(((x + y + p) & 31) == 0)
                 put(BG_B, x, y, T_BAR, PAL3, 0);
         }
     }
 
-    drawTextPair("CHUVA ELETRICA", "O SINAL ESTA ABERTO");
+    text1("CHUVA ELETRICA", 12, 12);
+    text1("O RUIDO TEM MEMORIA", 10, 15);
 }
 
 static void setupScene(u16 s)
@@ -416,9 +414,9 @@ static void setupScene(u16 s)
     if(scene == SCENE_BOOT)
     {
         fillRect(BG_B, 0, 0, 40, 28, T_EMPTY, PAL0);
-        VDP_drawText("MEGAMANDALA MD", 13, 11);
-        VDP_drawText("NAO HA FASE", 14, 13);
-        VDP_drawText("SO FREQUENCIA", 13, 14);
+        text1("MEGAMANDALA MD", 13, 11);
+        text1("NAO HA FASE", 14, 13);
+        text1("SO FREQUENCIA", 13, 14);
     }
 }
 
@@ -427,47 +425,25 @@ static void nextScene(void)
     setupScene(scene + 1);
 }
 
-static void smallSparks(void)
-{
-    u16 i, x, y;
-
-    if((frame & 7) != 0)
-        return;
-
-    for(i = 0; i < 9; i++)
-    {
-        x = 4 + (rng() % 32);
-        y = 4 + (rng() % 20);
-
-        if(y > 11 && y < 16)
-            y += 5;
-
-        put(BG_A, x, y, (rng() & 1) ? T_DOT : T_CROSS, (rng() & 1) ? PAL2 : PAL3, 1);
-    }
-}
-
 static void updateScene(void)
 {
     pulseFlash(frame);
 
     if((frame & 3) != 0)
-    {
-        smallSparks();
         return;
-    }
 
     if(scene == SCENE_DREAM)
-        drawDreamLoop();
+        dream();
     else if(scene == SCENE_WAVE)
-        drawWaveLoop();
+        wave();
     else if(scene == SCENE_MATRIX)
-        drawMatrixLoop();
+        matrix();
     else if(scene == SCENE_ORACLE)
-        drawOracleLoop();
+        oracle();
     else if(scene == SCENE_TUNNEL)
-        drawTunnelLoop();
+        tunnel();
     else if(scene == SCENE_RAIN)
-        drawRainLoop();
+        rain();
     else
     {
         if((frame & 63) < 4)
