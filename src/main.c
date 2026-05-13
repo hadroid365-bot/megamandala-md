@@ -2,15 +2,14 @@
 
 /*
     MEGAMANDALA MD
-    v0.8 - HYPNOTIC POLISH
+    v0.9 - HYPNOTIC POLISH / SPEED CONTROL
     SGDK / Marsdev
 
     - Sem olho
     - Sem deslizamento de BG
-    - Mais preto / mais respiro
-    - Psicodelia mais dirigida
-    - Flash em assinatura rítmica
-    - Glitch localizado
+    - Transição automática: 20 segundos
+    - CIMA aumenta velocidade visual
+    - BAIXO reduz velocidade visual
     - START / A / B / C avança cena
 */
 
@@ -36,9 +35,11 @@
 #define SCENE_RAIN      6
 #define SCENE_COUNT     7
 
-#define SCENE_TIME      720
+#define SCENE_TIME      1200
 
 static u16 frame = 0;
+static u16 animFrame = 0;
+static u16 animSpeed = 1;
 static u16 sceneTimer = 0;
 static u16 scene = 0;
 static u16 lastJoy = 0;
@@ -161,7 +162,6 @@ static void pulseFlash(u16 f)
     u16 p = f & 127;
     u16 c = 0x0000;
 
-    /* assinatura rítmica: TA ... TA-TA ... TA ... FLASH */
     if(p < 3)
         c = rgb(7,7,7);
     else if(p == 12 || p == 13)
@@ -213,7 +213,7 @@ static void text1(const char *a, u16 x, u16 y)
 static void dream(void)
 {
     u16 x, y, p, t;
-    p = frame >> 3;
+    p = animFrame >> 3;
 
     clearPlanes();
 
@@ -253,7 +253,7 @@ static void dream(void)
 static void wave(void)
 {
     u16 x, y, p, t;
-    p = frame >> 3;
+    p = animFrame >> 3;
 
     clearPlanes();
 
@@ -282,7 +282,7 @@ static void wave(void)
 static void matrix(void)
 {
     u16 x, y, p;
-    p = frame >> 2;
+    p = animFrame >> 2;
 
     clearPlanes();
 
@@ -300,13 +300,13 @@ static void matrix(void)
         }
     }
 
-    text1("SINAL EM FLUXO", 10, 13);
+    text1("O SINAL ESTA ABERTO", 10, 13);
 }
 
 static void oracle(void)
 {
     u16 x, y, p, t;
-    p = frame >> 3;
+    p = animFrame >> 3;
 
     clearPlanes();
 
@@ -328,23 +328,22 @@ static void oracle(void)
         }
     }
 
-    /* glitch localizado no canto */
-    if((frame & 7) == 0)
+    if((animFrame & 7) == 0)
     {
         for(y = 2; y < 8; y++)
             for(x = 2; x < 11; x++)
-                if(((x + y + frame) & 1) == 0)
+                if(((x + y + animFrame) & 1) == 0)
                     put(BG_A, x, y, T_NOISE, PAL2, 1);
     }
 
     text1("NAO E BUG", 15, 12);
-    text1("EH HADRONIC", 15, 15);
+    text1("E ORACULO", 15, 15);
 }
 
 static void tunnel(void)
 {
     u16 x, y, p, dist, t;
-    p = frame >> 3;
+    p = animFrame >> 3;
 
     clearPlanes();
 
@@ -375,7 +374,7 @@ static void tunnel(void)
 static void rain(void)
 {
     u16 x, y, p;
-    p = frame >> 2;
+    p = animFrame >> 2;
 
     clearPlanes();
 
@@ -427,7 +426,7 @@ static void nextScene(void)
 
 static void updateScene(void)
 {
-    pulseFlash(frame);
+    pulseFlash(animFrame);
 
     if((frame & 3) != 0)
         return;
@@ -474,6 +473,18 @@ int main(bool hard)
         pressed = joy & ~lastJoy;
         lastJoy = joy;
 
+        if(pressed & BUTTON_UP)
+        {
+            if(animSpeed < 6)
+                animSpeed++;
+        }
+
+        if(pressed & BUTTON_DOWN)
+        {
+            if(animSpeed > 1)
+                animSpeed--;
+        }
+
         if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
             nextScene();
 
@@ -482,6 +493,7 @@ int main(bool hard)
 
         updateScene();
 
+        animFrame += animSpeed;
         frame++;
         sceneTimer++;
 
