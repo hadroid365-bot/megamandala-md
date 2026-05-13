@@ -2,16 +2,15 @@
 
 /*
     MEGAMANDALA MD
-    v0.6 - STATIC BG / FULLSCREEN PULSE
+    v0.7 - PSYCHO STATIC LOOPS
     SGDK / Marsdev
 
-    Ideia:
-    - Backgrounds permanecem na tela.
-    - Sem deslizamento de BG.
-    - Textos fixos/rituais.
-    - Artefatos reduzidos.
-    - Flashs fullscreen mais fortes por paleta.
-    - START / A / B / C avança cena.
+    - Sem tela do olho
+    - Sem deslizamento de BG
+    - Padrões psicodélicos tipo v0.2
+    - Loops por redraw de tilemap
+    - Flashs fullscreen por paleta
+    - START / A / B / C avança cena
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -28,12 +27,12 @@
 #define T_BAR           (TILE_BASE + 9)
 
 #define SCENE_BOOT      0
-#define SCENE_RESPIRA   1
-#define SCENE_GRADE     2
-#define SCENE_CIRCUITO  3
-#define SCENE_MATRIZ    4
-#define SCENE_ORACULO   5
-#define SCENE_EYE       6
+#define SCENE_DREAM     1
+#define SCENE_WAVE      2
+#define SCENE_MATRIX    3
+#define SCENE_ORACLE    4
+#define SCENE_TUNNEL    5
+#define SCENE_RAIN      6
 #define SCENE_COUNT     7
 
 #define SCENE_TIME      720
@@ -49,117 +48,60 @@ static u16 pal1[16];
 static u16 pal2[16];
 static u16 pal3[16];
 
-static const u32 tile_empty[8] =
-{
-    0,0,0,0,0,0,0,0
-};
+static const u32 tile_empty[8] = {0,0,0,0,0,0,0,0};
 
 static const u32 tile_dot[8] =
 {
-    0x00000000,
-    0x00033000,
-    0x00333300,
-    0x03333330,
-    0x03333330,
-    0x00333300,
-    0x00033000,
-    0x00000000
+    0x00000000,0x00033000,0x00333300,0x03333330,
+    0x03333330,0x00333300,0x00033000,0x00000000
 };
 
 static const u32 tile_line[8] =
 {
-    0x11111111,
-    0x00000000,
-    0x22222222,
-    0x00000000,
-    0x11111111,
-    0x00000000,
-    0x22222222,
-    0x00000000
+    0x11111111,0x00000000,0x22222222,0x00000000,
+    0x11111111,0x00000000,0x22222222,0x00000000
 };
 
 static const u32 tile_scan[8] =
 {
-    0x30303030,
-    0x03030303,
-    0x30303030,
-    0x03030303,
-    0x30303030,
-    0x03030303,
-    0x30303030,
-    0x03030303
+    0x30303030,0x03030303,0x30303030,0x03030303,
+    0x30303030,0x03030303,0x30303030,0x03030303
 };
 
 static const u32 tile_grid[8] =
 {
-    0x33333333,
-    0x30000003,
-    0x30022003,
-    0x30022003,
-    0x30000003,
-    0x30022003,
-    0x30022003,
-    0x33333333
+    0x33333333,0x30000003,0x30022003,0x30022003,
+    0x30000003,0x30022003,0x30022003,0x33333333
 };
 
 static const u32 tile_noise[8] =
 {
-    0x10203010,
-    0x03020103,
-    0x30102030,
-    0x02010302,
-    0x10203010,
-    0x03020103,
-    0x30102030,
-    0x02010302
+    0x10203010,0x03020103,0x30102030,0x02010302,
+    0x10203010,0x03020103,0x30102030,0x02010302
 };
 
 static const u32 tile_cross[8] =
 {
-    0x30000003,
-    0x03000030,
-    0x00300300,
-    0x00033000,
-    0x00033000,
-    0x00300300,
-    0x03000030,
-    0x30000003
+    0x30000003,0x03000030,0x00300300,0x00033000,
+    0x00033000,0x00300300,0x03000030,0x30000003
 };
 
 static const u32 tile_diag_a[8] =
 {
-    0x30000000,
-    0x03000000,
-    0x00300000,
-    0x00030000,
-    0x00003000,
-    0x00000300,
-    0x00000030,
-    0x00000003
+    0x30000000,0x03000000,0x00300000,0x00030000,
+    0x00003000,0x00000300,0x00000030,0x00000003
 };
 
 static const u32 tile_diag_b[8] =
 {
-    0x00000003,
-    0x00000030,
-    0x00000300,
-    0x00003000,
-    0x00030000,
-    0x00300000,
-    0x03000000,
-    0x30000000
+    0x00000003,0x00000030,0x00000300,0x00003000,
+    0x00030000,0x00300000,0x03000000,0x30000000
 };
 
 static const u32 tile_bar[8] =
 {
-    0x00333300,
-    0x00333300,
-    0x00333300,
-    0x00333300,
-    0x00333300,
-    0x00333300,
-    0x00333300,
-    0x00333300
+    0x00333300,0x00333300,0x00333300,0x00333300,
+    0x00333300,0x00333300,0x00333300,0x00333300
 };
 
 static const u16 baseDark[16] =
@@ -218,7 +160,7 @@ static void pulseFlash(u16 f)
     u16 p = f & 127;
     u16 c;
 
-    if(p < 3)
+    if(p < 4)
         c = rgb(7,7,7);
     else if(p == 8 || p == 9)
         c = rgb(7,7,0);
@@ -226,8 +168,10 @@ static void pulseFlash(u16 f)
         c = rgb(7,0,7);
     else if(p == 24 || p == 25)
         c = rgb(0,7,7);
-    else if((p >= 64) && (p < 68))
+    else if((p >= 64) && (p < 70))
         c = rgb(7,0,0);
+    else if((p >= 96) && (p < 100))
+        c = rgb(7,4,0);
     else
         c = 0x0000;
 
@@ -254,130 +198,143 @@ static void clearPlanes(void)
     VDP_clearPlane(BG_B, TRUE);
 }
 
-static void fillPlane(VDPPlane plane, u16 tile, u16 pal)
+static void fillRect(VDPPlane plane, u16 x0, u16 y0, u16 w, u16 h, u16 tile, u16 pal)
 {
     u16 x, y;
 
-    for(y = 0; y < 28; y++)
-    {
-        for(x = 0; x < 40; x++)
+    for(y = y0; y < y0 + h; y++)
+        for(x = x0; x < x0 + w; x++)
             put(plane, x, y, tile, pal, 0);
-    }
+}
+
+static void drawTextCenter(const char *a)
+{
+    VDP_drawText(a, 7, 13);
 }
 
 static void drawTextPair(const char *a, const char *b)
 {
     VDP_drawText(a, 12, 10);
-    VDP_drawText(b, 9, 16);
+    VDP_drawText(b, 8, 16);
 }
 
-static void drawSoftFrame(u16 pal)
+static void drawDreamLoop(void)
 {
     u16 x, y;
+    u16 t;
+    u16 p = frame >> 2;
 
-    for(x = 3; x < 37; x++)
-    {
-        put(BG_B, x, 3,  T_DOT, pal, 0);
-        put(BG_B, x, 24, T_DOT, pal, 0);
-    }
-
-    for(y = 4; y < 24; y++)
-    {
-        put(BG_B, 3,  y, T_DOT, pal, 0);
-        put(BG_B, 36, y, T_DOT, pal, 0);
-    }
-}
-
-static void bgRespira(void)
-{
     clearPlanes();
-    fillPlane(BG_B, T_EMPTY, PAL0);
-    drawSoftFrame(PAL2);
-    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
-}
 
-static void bgGrade(void)
-{
-    clearPlanes();
-    fillPlane(BG_B, T_EMPTY, PAL0);
-
+    for(y = 1; y < 11; y++)
     {
-        u16 x, y;
-        for(y = 4; y < 24; y++)
+        for(x = 0; x < 40; x++)
         {
-            for(x = 4; x < 36; x++)
-            {
-                if(((x + y) & 3) == 0)
-                    put(BG_B, x, y, T_DOT, PAL2, 0);
-                else if(((x ^ y) & 7) == 0)
-                    put(BG_B, x, y, T_GRID, PAL3, 0);
-            }
+            if(((x + y + p) & 1) == 0)
+                t = T_NOISE;
+            else if(((x ^ y ^ p) & 3) == 0)
+                t = T_GRID;
+            else
+                t = T_SCAN;
+
+            put(BG_B, x, y, t, PAL1, 0);
         }
     }
 
-    drawSoftFrame(PAL3);
-    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
-}
-
-static void bgCircuito(void)
-{
-    clearPlanes();
-    fillPlane(BG_B, T_EMPTY, PAL0);
-
+    for(y = 16; y < 26; y++)
     {
-        u16 x, y;
-        for(y = 5; y < 23; y++)
+        for(x = 0; x < 40; x++)
         {
-            for(x = 2; x < 38; x++)
-            {
-                if((y == 6) || (y == 21))
-                    put(BG_B, x, y, T_LINE, PAL2, 0);
-                else if(((x + (y * 3)) & 11) == 0)
-                    put(BG_B, x, y, T_NOISE, PAL3, 0);
-            }
+            if(((x * 3 + y + p) & 2) == 0)
+                t = T_NOISE;
+            else
+                t = T_SCAN;
+
+            put(BG_B, x, y, t, PAL1, 0);
         }
     }
 
-    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+    put(BG_A, 18, 14, T_DOT, PAL3, 1);
+    put(BG_A, 21, 14, T_DOT, PAL3, 1);
+    drawTextCenter("O CARTUCHO ESTA SONHANDO");
 }
 
-static void bgMatriz(void)
+static void drawWaveLoop(void)
 {
+    u16 x, y;
+    u16 p = frame >> 2;
+    u16 t;
+
     clearPlanes();
 
+    for(y = 1; y < 26; y++)
     {
-        u16 x, y;
-        for(y = 0; y < 28; y++)
+        for(x = 3; x < 37; x++)
         {
-            for(x = 0; x < 40; x++)
-            {
-                if((x & 1) == 0)
-                    put(BG_B, x, y, T_BAR, PAL1, 0);
-                else
-                    put(BG_B, x, y, T_EMPTY, PAL0, 0);
-            }
+            if(y > 11 && y < 15)
+                continue;
+
+            if(((x + ((y + p) & 7)) & 3) == 0)
+                t = T_BAR;
+            else if(((x ^ y ^ p) & 3) == 0)
+                t = T_SCAN;
+            else
+                t = T_NOISE;
+
+            put(BG_B, x, y, t, ((x + y) & 1) ? PAL1 : PAL2, 0);
         }
     }
 
-    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+    drawTextPair("NAO HA FASE", "SO FREQUENCIA");
 }
 
-static void bgOraculo(void)
+static void drawMatrixLoop(void)
 {
-    clearPlanes();
-    fillPlane(BG_B, T_EMPTY, PAL0);
+    u16 x, y;
+    u16 p = frame >> 1;
 
+    clearPlanes();
+
+    for(y = 0; y < 28; y++)
     {
-        u16 x, y;
-        for(y = 4; y < 24; y++)
+        for(x = 0; x < 40; x++)
         {
-            for(x = 4; x < 36; x++)
-            {
-                if(((x + y) & 1) == 0)
-                    put(BG_B, x, y, T_SCAN, PAL1, 0);
-                if(((x * y) & 31) == 0)
-                    put(BG_B, x, y, T_CROSS, PAL3, 0);
-            }
+            if(y > 10 && y < 15)
+                continue;
+
+            if(((x + p) & 1) == 0)
+                put(BG_B, x, y, T_BAR, PAL1, 0);
+            else if(((x + y + p) & 7) == 0)
+                put(BG_B, x, y, T_DOT, PAL3, 0);
+        }
+    }
+
+    drawTextPair("A FREQUENCIA ESTA VIVA", "NAO DESLIGUE O SONHO");
+}
+
+static void drawOracleLoop(void)
+{
+    u16 x, y;
+    u16 p = frame >> 2;
+    u16 t;
+
+    clearPlanes();
+
+    for(y = 1; y < 26; y++)
+    {
+        for(x = 1; x < 39; x++)
+        {
+            if(y == 12 || y == 13 || y == 14)
+                continue;
+
+            if(((x * y + p) & 7) == 0)
+                t = T_CROSS;
+            else if(((x + y + p) & 1) == 0)
+                t = T_SCAN;
+            else
+                t = T_NOISE;
+
+            put(BG_B, x, y, t, ((x ^ y) & 1) ? PAL1 : PAL3, 0);
         }
     }
 
@@ -385,55 +342,61 @@ static void bgOraculo(void)
     VDP_drawText("E ORACULO", 15, 16);
 }
 
-static void drawEyeOnce(void)
+static void drawTunnelLoop(void)
 {
-    s16 cx = 20;
-    s16 cy = 14;
-    s16 i;
-    s16 d;
-    s16 top;
-    s16 bot;
+    u16 x, y;
+    u16 p = frame >> 2;
+    u16 dist;
+    u16 t;
 
     clearPlanes();
-    fillPlane(BG_B, T_EMPTY, PAL0);
 
-    for(i = -13; i <= 13; i++)
+    for(y = 2; y < 26; y++)
     {
-        d = i;
-        if(d < 0) d = -d;
+        for(x = 2; x < 38; x++)
+        {
+            if(y > 11 && y < 16)
+                continue;
 
-        top = cy - 5 + (d >> 2);
-        bot = cy + 5 - (d >> 2);
+            dist = (x > 20) ? x - 20 : 20 - x;
+            dist += (y > 14) ? y - 14 : 14 - y;
 
-        put(BG_A, cx + i, top, T_DIAG_A, PAL3, 1);
-        put(BG_A, cx + i, bot, T_DIAG_B, PAL3, 1);
+            if(((dist + p) & 3) == 0)
+                t = T_LINE;
+            else if(((x ^ y ^ p) & 3) == 0)
+                t = T_DIAG_A;
+            else
+                t = T_NOISE;
 
-        if((i & 3) == 0)
-            put(BG_A, cx + i, cy, T_SCAN, PAL2, 1);
+            put(BG_B, x, y, t, ((dist + p) & 1) ? PAL1 : PAL2, 0);
+        }
     }
 
-    put(BG_A, 18, 14, T_CROSS, PAL1, 1);
-    put(BG_A, 19, 14, T_CROSS, PAL1, 1);
-    put(BG_A, 20, 14, T_DOT,   PAL1, 1);
-    put(BG_A, 21, 14, T_CROSS, PAL1, 1);
-    put(BG_A, 22, 14, T_CROSS, PAL1, 1);
-
-    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+    drawTextPair("TUNEL DE FREQUENCIA", "O RUIDO TEM MEMORIA");
 }
 
-static void smallSparks(void)
+static void drawRainLoop(void)
 {
-    u16 i, x, y;
+    u16 x, y;
+    u16 p = frame >> 1;
 
-    if((frame & 15) != 0)
-        return;
+    clearPlanes();
 
-    for(i = 0; i < 5; i++)
+    for(y = 0; y < 28; y++)
     {
-        x = 4 + (rng() % 32);
-        y = 5 + (rng() % 18);
-        put(BG_A, x, y, (rng() & 1) ? T_DOT : T_CROSS, (rng() & 1) ? PAL2 : PAL3, 1);
+        for(x = 0; x < 40; x++)
+        {
+            if(y > 10 && y < 16)
+                continue;
+
+            if(((x + p) & 3) == 0)
+                put(BG_B, x, y, T_DOT, PAL1, 0);
+            else if(((x + y + p) & 15) == 0)
+                put(BG_B, x, y, T_BAR, PAL3, 0);
+        }
     }
+
+    drawTextPair("CHUVA ELETRICA", "O SINAL ESTA ABERTO");
 }
 
 static void setupScene(u16 s)
@@ -448,26 +411,15 @@ static void setupScene(u16 s)
     VDP_setVerticalScroll(BG_A, 0);
     VDP_setVerticalScroll(BG_B, 0);
 
+    clearPlanes();
+
     if(scene == SCENE_BOOT)
     {
-        clearPlanes();
-        fillPlane(BG_B, T_EMPTY, PAL0);
+        fillRect(BG_B, 0, 0, 40, 28, T_EMPTY, PAL0);
         VDP_drawText("MEGAMANDALA MD", 13, 11);
-        VDP_drawText("NÃO HA FASE", 14, 13);
+        VDP_drawText("NAO HA FASE", 14, 13);
         VDP_drawText("SO FREQUENCIA", 13, 14);
     }
-    else if(scene == SCENE_RESPIRA)
-        bgRespira();
-    else if(scene == SCENE_GRADE)
-        bgGrade();
-    else if(scene == SCENE_CIRCUITO)
-        bgCircuito();
-    else if(scene == SCENE_MATRIZ)
-        bgMatriz();
-    else if(scene == SCENE_ORACULO)
-        bgOraculo();
-    else
-        drawEyeOnce();
 }
 
 static void nextScene(void)
@@ -475,20 +427,53 @@ static void nextScene(void)
     setupScene(scene + 1);
 }
 
+static void smallSparks(void)
+{
+    u16 i, x, y;
+
+    if((frame & 7) != 0)
+        return;
+
+    for(i = 0; i < 9; i++)
+    {
+        x = 4 + (rng() % 32);
+        y = 4 + (rng() % 20);
+
+        if(y > 11 && y < 16)
+            y += 5;
+
+        put(BG_A, x, y, (rng() & 1) ? T_DOT : T_CROSS, (rng() & 1) ? PAL2 : PAL3, 1);
+    }
+}
+
 static void updateScene(void)
 {
     pulseFlash(frame);
 
-    if(scene == SCENE_BOOT)
+    if((frame & 3) != 0)
+    {
+        smallSparks();
+        return;
+    }
+
+    if(scene == SCENE_DREAM)
+        drawDreamLoop();
+    else if(scene == SCENE_WAVE)
+        drawWaveLoop();
+    else if(scene == SCENE_MATRIX)
+        drawMatrixLoop();
+    else if(scene == SCENE_ORACLE)
+        drawOracleLoop();
+    else if(scene == SCENE_TUNNEL)
+        drawTunnelLoop();
+    else if(scene == SCENE_RAIN)
+        drawRainLoop();
+    else
     {
         if((frame & 63) < 4)
             PAL_setColor(0, rgb(7,7,7));
         else
             PAL_setColor(0, 0x0000);
-    }
-    else
-    {
-        smallSparks();
     }
 }
 
