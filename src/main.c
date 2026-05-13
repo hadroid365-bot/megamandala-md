@@ -1,8 +1,8 @@
 #include <genesis.h>
 
-#define TILE_CHECKER   TILE_USERINDEX
-#define TILE_LINES     (TILE_USERINDEX + 1)
-#define TILE_DOT       (TILE_USERINDEX + 2)
+#define TILE_CHECKER   TILE_USER_INDEX
+#define TILE_LINES     (TILE_USER_INDEX + 1)
+#define TILE_DOT       (TILE_USER_INDEX + 2)
 
 static const u32 tile_checker[8] =
 {
