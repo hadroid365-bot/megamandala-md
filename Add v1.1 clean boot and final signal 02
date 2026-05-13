@@ -2,20 +2,7 @@
 
 /*
     MEGADRONIC
-    v1.0 - BOOT SEQUENCE / ONLY SIGNAL
-    SGDK / Marsdev
-
-    - Boot ritual:
-        Tela 1: MEGADRONIC
-        Tela 2: ONLY SIGNAL
-        Tela 3: PRESS START
-    - START entra nas cenas
-    - Sem olho
-    - Sem deslizamento de BG
-    - Transição automática: 20 segundos
-    - CIMA aumenta velocidade visual
-    - BAIXO reduz velocidade visual
-    - START / A / B / C avança cena durante as cenas
+    v1.1 - CLEAN BOOT + FINAL V0.2 SIGNAL
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -37,14 +24,15 @@
 #define SCENE_ORACLE    3
 #define SCENE_TUNNEL    4
 #define SCENE_RAIN      5
-#define SCENE_COUNT     6
-
-#define SCENE_TIME      1200
-#define BOOT_TIME       120
+#define SCENE_V02       6
+#define SCENE_COUNT     7
 
 #define BOOT_LOGO       0
 #define BOOT_SIGNAL     1
 #define BOOT_PRESS      2
+
+#define BOOT_TIME       120
+#define SCENE_TIME      1200
 
 static u16 frame = 0;
 static u16 animFrame = 0;
@@ -54,9 +42,10 @@ static u16 scene = 0;
 static u16 lastJoy = 0;
 static u16 seed = 0xB00D;
 
+static u16 inBoot = TRUE;
 static u16 bootStage = BOOT_LOGO;
 static u16 bootTimer = 0;
-static u16 inBoot = TRUE;
+static u16 lastBootStage = 999;
 
 static u16 pal0[16];
 static u16 pal1[16];
@@ -138,6 +127,23 @@ static u16 rgb(u16 r, u16 g, u16 b)
     return (u16)((b << 9) | (g << 5) | (r << 1));
 }
 
+static void put(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio)
+{
+    if(x < 40 && y < 28)
+        VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, 0, 0, tile), x, y);
+}
+
+static void clearPlanes(void)
+{
+    VDP_clearPlane(BG_A, TRUE);
+    VDP_clearPlane(BG_B, TRUE);
+}
+
+static void text1(const char *a, u16 x, u16 y)
+{
+    VDP_drawText(a, x, y);
+}
+
 static void loadTiles(void)
 {
     VDP_loadTileData(tile_empty, T_EMPTY, 1, DMA);
@@ -175,16 +181,11 @@ static void pulseFlash(u16 f)
     u16 p = f & 127;
     u16 c = 0x0000;
 
-    if(p < 3)
-        c = rgb(7,7,7);
-    else if(p == 12 || p == 13)
-        c = rgb(7,7,0);
-    else if(p == 24 || p == 25 || p == 28 || p == 29)
-        c = rgb(7,0,7);
-    else if(p == 48 || p == 49)
-        c = rgb(0,7,7);
-    else if((p >= 96) && (p < 102))
-        c = rgb(7,0,0);
+    if(p < 2) c = rgb(7,7,7);
+    else if(p == 12) c = rgb(7,7,0);
+    else if(p == 24 || p == 28) c = rgb(7,0,7);
+    else if(p == 48) c = rgb(0,7,7);
+    else if((p >= 96) && (p < 100)) c = rgb(7,0,0);
 
     pal0[0] = c;
     pal1[0] = c;
@@ -197,56 +198,23 @@ static void pulseFlash(u16 f)
     PAL_setPalette(PAL3, pal3, DMA_QUEUE);
 }
 
-static void put(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio)
+static void bootFlashShort(void)
 {
-    if(x < 40 && y < 28)
-        VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, 0, 0, tile), x, y);
-}
-
-static void clearPlanes(void)
-{
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
-}
-
-static void fillRect(VDPPlane plane, u16 x0, u16 y0, u16 w, u16 h, u16 tile, u16 pal)
-{
-    u16 x, y;
-
-    for(y = y0; y < y0 + h; y++)
-        for(x = x0; x < x0 + w; x++)
-            put(plane, x, y, tile, pal, 0);
-}
-
-static void text1(const char *a, u16 x, u16 y)
-{
-    VDP_drawText(a, x, y);
-}
-
-static void bootGlitch(void)
-{
-    u16 i;
-    u16 x;
-    u16 y;
-
-    if((frame & 15) != 0)
-        return;
-
-    for(i = 0; i < 5; i++)
-    {
-        x = rng() % 40;
-        y = rng() % 28;
-
-        if((x < 4) || (x > 35) || (y < 4) || (y > 23))
-            put(BG_A, x, y, (rng() & 1) ? T_NOISE : T_DOT, PAL3, 1);
-    }
+    if(bootTimer < 2)
+        PAL_setColor(0, rgb(7,7,7));
+    else
+        PAL_setColor(0, 0x0000);
 }
 
 static void drawBootStage(void)
 {
-    clearPlanes();
+    if(lastBootStage != bootStage)
+    {
+        clearPlanes();
+        lastBootStage = bootStage;
+    }
 
-    fillRect(BG_B, 0, 0, 40, 28, T_EMPTY, PAL0);
+    bootFlashShort();
 
     if(bootStage == BOOT_LOGO)
     {
@@ -258,14 +226,20 @@ static void drawBootStage(void)
     }
     else
     {
-        if((frame & 32) == 0)
+        if((frame & 63) < 48)
             text1("PRESS START", 14, 13);
-
-        text1("MEGADRONIC", 15, 9);
-        text1("ONLY SIGNAL", 14, 18);
+        else
+            VDP_clearText(14, 13, 11);
     }
 
-    bootGlitch();
+    if((frame & 31) == 0)
+    {
+        u16 x = rng() % 40;
+        u16 y = rng() % 28;
+
+        if((x < 4) || (x > 35) || (y < 4) || (y > 23))
+            put(BG_A, x, y, T_DOT, PAL3, 1);
+    }
 }
 
 static void startSignal(void)
@@ -276,7 +250,6 @@ static void startSignal(void)
     animFrame = 0;
     setPalettes(scene);
     clearPlanes();
-
     PAL_setColor(0, rgb(7,7,7));
 }
 
@@ -298,217 +271,185 @@ static void updateBoot(u16 pressed)
         {
             bootTimer = 0;
             bootStage++;
-
-            PAL_setColor(0, rgb(7,7,7));
         }
-    }
-    else
-    {
-        if((frame & 63) < 4)
-            PAL_setColor(0, rgb(7,7,7));
-        else
-            PAL_setColor(0, 0x0000);
     }
 }
 
 static void dream(void)
 {
-    u16 x, y, p, t;
+    u16 x,y,p,t;
     p = animFrame >> 3;
-
     clearPlanes();
 
-    for(y = 1; y < 10; y++)
-    {
-        for(x = 2; x < 38; x++)
+    for(y=1;y<10;y++)
+        for(x=2;x<38;x++)
         {
-            if(((x + y + p) & 3) == 0)
-                t = T_NOISE;
-            else if(((x ^ y ^ p) & 7) == 0)
-                t = T_GRID;
-            else
-                t = T_SCAN;
-
-            put(BG_B, x, y, t, ((x + y) & 1) ? PAL1 : PAL2, 0);
+            if(((x+y+p)&3)==0) t=T_NOISE;
+            else if(((x^y^p)&7)==0) t=T_GRID;
+            else t=T_SCAN;
+            put(BG_B,x,y,t,((x+y)&1)?PAL1:PAL2,0);
         }
-    }
 
-    for(y = 18; y < 26; y++)
-    {
-        for(x = 2; x < 38; x++)
+    for(y=18;y<26;y++)
+        for(x=2;x<38;x++)
         {
-            if(((x * 3 + y + p) & 3) == 0)
-                t = T_NOISE;
-            else
-                t = T_SCAN;
-
-            put(BG_B, x, y, t, PAL1, 0);
+            if(((x*3+y+p)&3)==0) t=T_NOISE;
+            else t=T_SCAN;
+            put(BG_B,x,y,t,PAL1,0);
         }
-    }
 
-    put(BG_A, 18, 14, T_DOT, PAL3, 1);
-    put(BG_A, 21, 14, T_DOT, PAL3, 1);
-    text1("O CARTUCHO ESTA SONHANDO", 7, 13);
+    text1("O CARTUCHO ESTA SONHANDO",7,13);
 }
 
 static void wave(void)
 {
-    u16 x, y, p, t;
+    u16 x,y,p,t;
     p = animFrame >> 3;
-
     clearPlanes();
 
-    for(y = 2; y < 26; y++)
-    {
-        for(x = 4; x < 36; x++)
+    for(y=2;y<26;y++)
+        for(x=4;x<36;x++)
         {
-            if(y > 10 && y < 17)
-                continue;
+            if(y>10 && y<17) continue;
 
-            if(((x + ((y + p) & 7)) & 5) == 0)
-                t = T_BAR;
-            else if(((x ^ y ^ p) & 7) == 0)
-                t = T_SCAN;
-            else
-                t = T_NOISE;
+            if(((x+((y+p)&7))&5)==0) t=T_BAR;
+            else if(((x^y^p)&7)==0) t=T_SCAN;
+            else t=T_NOISE;
 
-            put(BG_B, x, y, t, ((x + y) & 1) ? PAL1 : PAL2, 0);
+            put(BG_B,x,y,t,((x+y)&1)?PAL1:PAL2,0);
         }
-    }
 
-    text1("NAO HA FASE", 14, 12);
-    text1("SO FREQUENCIA", 13, 15);
+    text1("NAO HA FASE",14,12);
+    text1("SO FREQUENCIA",13,15);
 }
 
 static void matrix(void)
 {
-    u16 x, y, p;
+    u16 x,y,p;
     p = animFrame >> 2;
-
     clearPlanes();
 
-    for(y = 0; y < 28; y++)
-    {
-        for(x = 0; x < 40; x++)
+    for(y=0;y<28;y++)
+        for(x=0;x<40;x++)
         {
-            if(y > 9 && y < 18)
-                continue;
+            if(y>9 && y<18) continue;
 
-            if(((x + p) & 7) == 0)
-                put(BG_B, x, y, T_BAR, PAL1, 0);
-            else if(((x + y + p) & 31) == 0)
-                put(BG_B, x, y, T_DOT, PAL3, 0);
+            if(((x+p)&7)==0)
+                put(BG_B,x,y,T_BAR,PAL1,0);
+            else if(((x+y+p)&31)==0)
+                put(BG_B,x,y,T_DOT,PAL3,0);
         }
-    }
 
-    text1("O SINAL ESTA ABERTO", 10, 13);
+    text1("O SINAL ESTA ABERTO",10,13);
 }
 
 static void oracle(void)
 {
-    u16 x, y, p, t;
+    u16 x,y,p,t;
     p = animFrame >> 3;
-
     clearPlanes();
 
-    for(y = 1; y < 26; y++)
-    {
-        for(x = 1; x < 39; x++)
+    for(y=1;y<26;y++)
+        for(x=1;x<39;x++)
         {
-            if(y == 11 || y == 12 || y == 13 || y == 14 || y == 15)
-                continue;
+            if(y>=11 && y<=15) continue;
 
-            if(((x * y + p) & 11) == 0)
-                t = T_CROSS;
-            else if(((x + y + p) & 3) == 0)
-                t = T_SCAN;
-            else
-                continue;
+            if(((x*y+p)&11)==0) t=T_CROSS;
+            else if(((x+y+p)&3)==0) t=T_SCAN;
+            else continue;
 
-            put(BG_B, x, y, t, ((x ^ y) & 1) ? PAL1 : PAL3, 0);
+            put(BG_B,x,y,t,((x^y)&1)?PAL1:PAL3,0);
         }
-    }
 
-    if((animFrame & 7) == 0)
-    {
-        for(y = 2; y < 8; y++)
-            for(x = 2; x < 11; x++)
-                if(((x + y + animFrame) & 1) == 0)
-                    put(BG_A, x, y, T_NOISE, PAL2, 1);
-    }
-
-    text1("NAO E BUG", 15, 12);
-    text1("E ORACULO", 15, 15);
+    text1("NAO E BUG",15,12);
+    text1("E ORACULO",15,15);
 }
 
 static void tunnel(void)
 {
-    u16 x, y, p, dist, t;
+    u16 x,y,p,dist,t;
     p = animFrame >> 3;
-
     clearPlanes();
 
-    for(y = 2; y < 26; y++)
-    {
-        for(x = 2; x < 38; x++)
+    for(y=2;y<26;y++)
+        for(x=2;x<38;x++)
         {
-            if(y > 10 && y < 17)
-                continue;
+            if(y>10 && y<17) continue;
 
-            dist = (x > 20) ? x - 20 : 20 - x;
-            dist += (y > 14) ? y - 14 : 14 - y;
+            dist = (x>20)?x-20:20-x;
+            dist += (y>14)?y-14:14-y;
 
-            if(((dist + p) & 3) == 0)
-                t = T_LINE;
-            else if(((x ^ y ^ p) & 7) == 0)
-                t = ((x + y) & 1) ? T_DIAG_A : T_DIAG_B;
-            else
-                continue;
+            if(((dist+p)&3)==0) t=T_LINE;
+            else if(((x^y^p)&7)==0) t=((x+y)&1)?T_DIAG_A:T_DIAG_B;
+            else continue;
 
-            put(BG_B, x, y, t, ((dist + p) & 1) ? PAL1 : PAL2, 0);
+            put(BG_B,x,y,t,((dist+p)&1)?PAL1:PAL2,0);
         }
-    }
 
-    text1("TUNEL DE FREQUENCIA", 10, 13);
+    text1("TUNEL DE FREQUENCIA",10,13);
 }
 
 static void rain(void)
 {
-    u16 x, y, p;
+    u16 x,y,p;
     p = animFrame >> 2;
-
     clearPlanes();
 
-    for(y = 0; y < 28; y++)
-    {
-        for(x = 0; x < 40; x++)
+    for(y=0;y<28;y++)
+        for(x=0;x<40;x++)
         {
-            if(y > 8 && y < 19)
-                continue;
+            if(y>8 && y<19) continue;
 
-            if(((x + p) & 7) == 0)
-                put(BG_B, x, y, T_DOT, PAL1, 0);
-            else if(((x + y + p) & 31) == 0)
-                put(BG_B, x, y, T_BAR, PAL3, 0);
+            if(((x+p)&7)==0)
+                put(BG_B,x,y,T_DOT,PAL1,0);
+            else if(((x+y+p)&31)==0)
+                put(BG_B,x,y,T_BAR,PAL3,0);
         }
-    }
 
-    text1("CHUVA ELETRICA", 12, 12);
-    text1("O RUIDO TEM MEMORIA", 10, 15);
+    text1("CHUVA ELETRICA",12,12);
+    text1("O RUIDO TEM MEMORIA",10,15);
+}
+
+static void v02Signal(void)
+{
+    u16 x,y,p,t,pal;
+    p = animFrame >> 1;
+    clearPlanes();
+
+    for(y=0;y<12;y++)
+        for(x=0;x<40;x++)
+        {
+            if(((x+y+p)&1)==0) t=T_NOISE;
+            else if(((x^y^p)&3)==0) t=T_GRID;
+            else t=T_SCAN;
+
+            pal = ((x+y+p)&2) ? PAL1 : PAL3;
+            put(BG_B,x,y,t,pal,0);
+        }
+
+    for(y=15;y<28;y++)
+        for(x=0;x<40;x++)
+        {
+            if(((x*3+y+p)&1)==0) t=T_SCAN;
+            else if(((x+y+p)&3)==0) t=T_CROSS;
+            else t=T_NOISE;
+
+            pal = ((x^y^p)&2) ? PAL2 : PAL1;
+            put(BG_B,x,y,t,pal,0);
+        }
+
+    text1("SIGNAL 02",15,13);
 }
 
 static void setupScene(u16 s)
 {
     scene = s % SCENE_COUNT;
     sceneTimer = 0;
-
     setPalettes(scene);
-
-    VDP_setHorizontalScroll(BG_A, 0);
-    VDP_setHorizontalScroll(BG_B, 0);
-    VDP_setVerticalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_B, 0);
-
+    VDP_setHorizontalScroll(BG_A,0);
+    VDP_setHorizontalScroll(BG_B,0);
+    VDP_setVerticalScroll(BG_A,0);
+    VDP_setVerticalScroll(BG_B,0);
     clearPlanes();
 }
 
@@ -524,18 +465,13 @@ static void updateScene(void)
     if((frame & 3) != 0)
         return;
 
-    if(scene == SCENE_DREAM)
-        dream();
-    else if(scene == SCENE_WAVE)
-        wave();
-    else if(scene == SCENE_MATRIX)
-        matrix();
-    else if(scene == SCENE_ORACLE)
-        oracle();
-    else if(scene == SCENE_TUNNEL)
-        tunnel();
-    else
-        rain();
+    if(scene == SCENE_DREAM) dream();
+    else if(scene == SCENE_WAVE) wave();
+    else if(scene == SCENE_MATRIX) matrix();
+    else if(scene == SCENE_ORACLE) oracle();
+    else if(scene == SCENE_TUNNEL) tunnel();
+    else if(scene == SCENE_RAIN) rain();
+    else v02Signal();
 }
 
 int main(bool hard)
@@ -545,12 +481,13 @@ int main(bool hard)
 
     VDP_init();
     VDP_setScreenWidth320();
-    VDP_setPlaneSize(64, 32, TRUE);
+    VDP_setPlaneSize(64,32,TRUE);
 
     JOY_init();
 
     loadTiles();
     setPalettes(0);
+    clearPlanes();
 
     while(TRUE)
     {
@@ -566,14 +503,12 @@ int main(bool hard)
         {
             if(pressed & BUTTON_UP)
             {
-                if(animSpeed < 6)
-                    animSpeed++;
+                if(animSpeed < 6) animSpeed++;
             }
 
             if(pressed & BUTTON_DOWN)
             {
-                if(animSpeed > 1)
-                    animSpeed--;
+                if(animSpeed > 1) animSpeed--;
             }
 
             if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
@@ -589,7 +524,6 @@ int main(bool hard)
         }
 
         frame++;
-
         SYS_doVBlankProcess();
     }
 
