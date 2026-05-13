@@ -1,16 +1,21 @@
 #include <genesis.h>
 
 /*
-    MEGAMANDALA MD
-    v0.9 - HYPNOTIC POLISH / SPEED CONTROL
+    MEGADRONIC
+    v1.0 - BOOT SEQUENCE / ONLY SIGNAL
     SGDK / Marsdev
 
+    - Boot ritual:
+        Tela 1: MEGADRONIC
+        Tela 2: ONLY SIGNAL
+        Tela 3: PRESS START
+    - START entra nas cenas
     - Sem olho
     - Sem deslizamento de BG
     - Transição automática: 20 segundos
     - CIMA aumenta velocidade visual
     - BAIXO reduz velocidade visual
-    - START / A / B / C avança cena
+    - START / A / B / C avança cena durante as cenas
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -26,16 +31,20 @@
 #define T_DIAG_B        (TILE_BASE + 8)
 #define T_BAR           (TILE_BASE + 9)
 
-#define SCENE_BOOT      0
-#define SCENE_DREAM     1
-#define SCENE_WAVE      2
-#define SCENE_MATRIX    3
-#define SCENE_ORACLE    4
-#define SCENE_TUNNEL    5
-#define SCENE_RAIN      6
-#define SCENE_COUNT     7
+#define SCENE_DREAM     0
+#define SCENE_WAVE      1
+#define SCENE_MATRIX    2
+#define SCENE_ORACLE    3
+#define SCENE_TUNNEL    4
+#define SCENE_RAIN      5
+#define SCENE_COUNT     6
 
 #define SCENE_TIME      1200
+#define BOOT_TIME       120
+
+#define BOOT_LOGO       0
+#define BOOT_SIGNAL     1
+#define BOOT_PRESS      2
 
 static u16 frame = 0;
 static u16 animFrame = 0;
@@ -44,6 +53,10 @@ static u16 sceneTimer = 0;
 static u16 scene = 0;
 static u16 lastJoy = 0;
 static u16 seed = 0xB00D;
+
+static u16 bootStage = BOOT_LOGO;
+static u16 bootTimer = 0;
+static u16 inBoot = TRUE;
 
 static u16 pal0[16];
 static u16 pal1[16];
@@ -208,6 +221,94 @@ static void fillRect(VDPPlane plane, u16 x0, u16 y0, u16 w, u16 h, u16 tile, u16
 static void text1(const char *a, u16 x, u16 y)
 {
     VDP_drawText(a, x, y);
+}
+
+static void bootGlitch(void)
+{
+    u16 i;
+    u16 x;
+    u16 y;
+
+    if((frame & 15) != 0)
+        return;
+
+    for(i = 0; i < 5; i++)
+    {
+        x = rng() % 40;
+        y = rng() % 28;
+
+        if((x < 4) || (x > 35) || (y < 4) || (y > 23))
+            put(BG_A, x, y, (rng() & 1) ? T_NOISE : T_DOT, PAL3, 1);
+    }
+}
+
+static void drawBootStage(void)
+{
+    clearPlanes();
+
+    fillRect(BG_B, 0, 0, 40, 28, T_EMPTY, PAL0);
+
+    if(bootStage == BOOT_LOGO)
+    {
+        text1("MEGADRONIC", 15, 13);
+    }
+    else if(bootStage == BOOT_SIGNAL)
+    {
+        text1("ONLY SIGNAL", 14, 13);
+    }
+    else
+    {
+        if((frame & 32) == 0)
+            text1("PRESS START", 14, 13);
+
+        text1("MEGADRONIC", 15, 9);
+        text1("ONLY SIGNAL", 14, 18);
+    }
+
+    bootGlitch();
+}
+
+static void startSignal(void)
+{
+    inBoot = FALSE;
+    scene = SCENE_DREAM;
+    sceneTimer = 0;
+    animFrame = 0;
+    setPalettes(scene);
+    clearPlanes();
+
+    PAL_setColor(0, rgb(7,7,7));
+}
+
+static void updateBoot(u16 pressed)
+{
+    if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
+    {
+        startSignal();
+        return;
+    }
+
+    drawBootStage();
+
+    if(bootStage < BOOT_PRESS)
+    {
+        bootTimer++;
+
+        if(bootTimer > BOOT_TIME)
+        {
+            bootTimer = 0;
+            bootStage++;
+
+            PAL_setColor(0, rgb(7,7,7));
+        }
+    }
+    else
+    {
+        if((frame & 63) < 4)
+            PAL_setColor(0, rgb(7,7,7));
+        else
+            PAL_setColor(0, 0x0000);
+    }
 }
 
 static void dream(void)
@@ -409,14 +510,6 @@ static void setupScene(u16 s)
     VDP_setVerticalScroll(BG_B, 0);
 
     clearPlanes();
-
-    if(scene == SCENE_BOOT)
-    {
-        fillRect(BG_B, 0, 0, 40, 28, T_EMPTY, PAL0);
-        text1("MEGAMANDALA MD", 13, 11);
-        text1("NAO HA FASE", 14, 13);
-        text1("SO FREQUENCIA", 13, 14);
-    }
 }
 
 static void nextScene(void)
@@ -441,15 +534,8 @@ static void updateScene(void)
         oracle();
     else if(scene == SCENE_TUNNEL)
         tunnel();
-    else if(scene == SCENE_RAIN)
-        rain();
     else
-    {
-        if((frame & 63) < 4)
-            PAL_setColor(0, rgb(7,7,7));
-        else
-            PAL_setColor(0, 0x0000);
-    }
+        rain();
 }
 
 int main(bool hard)
@@ -465,7 +551,6 @@ int main(bool hard)
 
     loadTiles();
     setPalettes(0);
-    setupScene(SCENE_BOOT);
 
     while(TRUE)
     {
@@ -473,29 +558,37 @@ int main(bool hard)
         pressed = joy & ~lastJoy;
         lastJoy = joy;
 
-        if(pressed & BUTTON_UP)
+        if(inBoot)
         {
-            if(animSpeed < 6)
-                animSpeed++;
+            updateBoot(pressed);
+        }
+        else
+        {
+            if(pressed & BUTTON_UP)
+            {
+                if(animSpeed < 6)
+                    animSpeed++;
+            }
+
+            if(pressed & BUTTON_DOWN)
+            {
+                if(animSpeed > 1)
+                    animSpeed--;
+            }
+
+            if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
+                nextScene();
+
+            if(sceneTimer > SCENE_TIME)
+                nextScene();
+
+            updateScene();
+
+            animFrame += animSpeed;
+            sceneTimer++;
         }
 
-        if(pressed & BUTTON_DOWN)
-        {
-            if(animSpeed > 1)
-                animSpeed--;
-        }
-
-        if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
-            nextScene();
-
-        if(sceneTimer > SCENE_TIME)
-            nextScene();
-
-        updateScene();
-
-        animFrame += animSpeed;
         frame++;
-        sceneTimer++;
 
         SYS_doVBlankProcess();
     }
