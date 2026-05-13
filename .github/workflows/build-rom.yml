@@ -17,13 +17,13 @@ jobs:
       - name: Install base dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget unzip make gcc g++ texinfo bison flex
+          sudo apt-get install -y build-essential git wget unzip make gcc g++ texinfo bison flex openjdk-11-jre
 
       - name: Install SGDK through Marsdev
         run: |
-          git clone https://github.com/andwn/marsdev.git /tmp/marsdev
+          git clone --recurse-submodules https://github.com/andwn/marsdev.git /tmp/marsdev
           cd /tmp/marsdev
-          sudo make sgdk
+          make sgdk -j2
           sudo make install
 
       - name: Build ROM
