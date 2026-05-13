@@ -5,33 +5,36 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - Dockerfile.sgdk
+      - .github/workflows/build-sgdk-image.yml
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: read
+
+    container:
+      image: ghcr.io/hadroid365-bot/sgdk-marsdev:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install base dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git wget unzip make gcc g++ texinfo bison flex openjdk-11-jre
-
-      - name: Install SGDK through Marsdev
-        run: |
-          git clone --recurse-submodules https://github.com/andwn/marsdev.git /tmp/marsdev
-          cd /tmp/marsdev
-          make sgdk -j2
-          sudo make install
-
       - name: Build ROM
+        shell: bash
         run: |
           source /opt/toolchains/mars/mars.sh
           make
 
       - name: Prepare ROM artifact
+        shell: bash
         run: |
           mkdir -p artifact
           cp out/rom.bin artifact/MEGAMANDALA_MD.bin
