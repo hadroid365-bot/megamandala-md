@@ -2,7 +2,14 @@
 
 /*
     MEGADRONIC
-    v1.1 - CLEAN BOOT + FINAL V0.2 SIGNAL
+    v1.2 - CLEAN BOOT FIX + V0.3 LOOPS WITHOUT MANDALA
+
+    Corrige:
+    - pulso branco do boot curto de verdade
+    - cada tela do boot substitui a anterior
+    - PRESS START aparece corretamente
+    - insere estética v0.3 no final
+    - remove mandala
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -17,6 +24,11 @@
 #define T_DIAG_A        (TILE_BASE + 7)
 #define T_DIAG_B        (TILE_BASE + 8)
 #define T_BAR           (TILE_BASE + 9)
+#define T_CHECKER       (TILE_BASE + 10)
+#define T_BAR_H         (TILE_BASE + 11)
+#define T_BRACKET       (TILE_BASE + 12)
+
+#define MAX_LINES       240
 
 #define SCENE_DREAM     0
 #define SCENE_WAVE      1
@@ -25,7 +37,11 @@
 #define SCENE_TUNNEL    4
 #define SCENE_RAIN      5
 #define SCENE_V02       6
-#define SCENE_COUNT     7
+#define SCENE_MACRONIC  7
+#define SCENE_V03TUNNEL 8
+#define SCENE_V03GLITCH 9
+#define SCENE_BREATH    10
+#define SCENE_COUNT     11
 
 #define BOOT_LOGO       0
 #define BOOT_SIGNAL     1
@@ -46,6 +62,9 @@ static u16 inBoot = TRUE;
 static u16 bootStage = BOOT_LOGO;
 static u16 bootTimer = 0;
 static u16 lastBootStage = 999;
+static u16 bootFlash = 2;
+
+static s16 hscroll[MAX_LINES];
 
 static u16 pal0[16];
 static u16 pal1[16];
@@ -108,6 +127,24 @@ static const u32 tile_bar[8] =
     0x00333300,0x00333300,0x00333300,0x00333300
 };
 
+static const u32 tile_checker[8] =
+{
+    0x10101010,0x01010101,0x10101010,0x01010101,
+    0x10101010,0x01010101,0x10101010,0x01010101
+};
+
+static const u32 tile_bar_h[8] =
+{
+    0x00000000,0x00000000,0x33333333,0x33333333,
+    0x00000000,0x00000000,0x11111111,0x00000000
+};
+
+static const u32 tile_bracket[8] =
+{
+    0x03333300,0x03000000,0x03000000,0x03330000,
+    0x03330000,0x03000000,0x03000000,0x03333300
+};
+
 static const u16 baseDark[16] =
 {
     0x0000,0x0222,0x0444,0x0666,
@@ -133,6 +170,12 @@ static void put(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio)
         VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, 0, 0, tile), x, y);
 }
 
+static void putFlip(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio, u16 vf, u16 hf)
+{
+    if(x < 40 && y < 28)
+        VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, vf, hf, tile), x, y);
+}
+
 static void clearPlanes(void)
 {
     VDP_clearPlane(BG_A, TRUE);
@@ -144,18 +187,26 @@ static void text1(const char *a, u16 x, u16 y)
     VDP_drawText(a, x, y);
 }
 
+static void clearTextLine(u16 y)
+{
+    VDP_drawText("                                        ", 0, y);
+}
+
 static void loadTiles(void)
 {
-    VDP_loadTileData(tile_empty, T_EMPTY, 1, DMA);
-    VDP_loadTileData(tile_dot,   T_DOT,   1, DMA);
-    VDP_loadTileData(tile_line,  T_LINE,  1, DMA);
-    VDP_loadTileData(tile_scan,  T_SCAN,  1, DMA);
-    VDP_loadTileData(tile_grid,  T_GRID,  1, DMA);
-    VDP_loadTileData(tile_noise, T_NOISE, 1, DMA);
-    VDP_loadTileData(tile_cross, T_CROSS, 1, DMA);
-    VDP_loadTileData(tile_diag_a,T_DIAG_A,1, DMA);
-    VDP_loadTileData(tile_diag_b,T_DIAG_B,1, DMA);
-    VDP_loadTileData(tile_bar,   T_BAR,   1, DMA);
+    VDP_loadTileData(tile_empty,   T_EMPTY,   1, DMA);
+    VDP_loadTileData(tile_dot,     T_DOT,     1, DMA);
+    VDP_loadTileData(tile_line,    T_LINE,    1, DMA);
+    VDP_loadTileData(tile_scan,    T_SCAN,    1, DMA);
+    VDP_loadTileData(tile_grid,    T_GRID,    1, DMA);
+    VDP_loadTileData(tile_noise,   T_NOISE,   1, DMA);
+    VDP_loadTileData(tile_cross,   T_CROSS,   1, DMA);
+    VDP_loadTileData(tile_diag_a,  T_DIAG_A,  1, DMA);
+    VDP_loadTileData(tile_diag_b,  T_DIAG_B,  1, DMA);
+    VDP_loadTileData(tile_bar,     T_BAR,     1, DMA);
+    VDP_loadTileData(tile_checker, T_CHECKER, 1, DMA);
+    VDP_loadTileData(tile_bar_h,   T_BAR_H,   1, DMA);
+    VDP_loadTileData(tile_bracket, T_BRACKET, 1, DMA);
 }
 
 static void setPalettes(u16 mode)
@@ -174,6 +225,21 @@ static void setPalettes(u16 mode)
     PAL_setPalette(PAL1, pal1, DMA);
     PAL_setPalette(PAL2, pal2, DMA);
     PAL_setPalette(PAL3, pal3, DMA);
+}
+
+static void clearHScroll(void)
+{
+    u16 i;
+    u16 lines = VDP_getScreenHeight();
+
+    if(lines > MAX_LINES)
+        lines = MAX_LINES;
+
+    for(i = 0; i < lines; i++)
+        hscroll[i] = 0;
+
+    VDP_setHorizontalScrollLine(BG_A, 0, hscroll, lines, DMA_QUEUE);
+    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
 }
 
 static void pulseFlash(u16 f)
@@ -198,12 +264,17 @@ static void pulseFlash(u16 f)
     PAL_setPalette(PAL3, pal3, DMA_QUEUE);
 }
 
-static void bootFlashShort(void)
+static void bootPulse(void)
 {
-    if(bootTimer < 2)
+    if(bootFlash > 0)
+    {
         PAL_setColor(0, rgb(7,7,7));
+        bootFlash--;
+    }
     else
+    {
         PAL_setColor(0, 0x0000);
+    }
 }
 
 static void drawBootStage(void)
@@ -212,9 +283,10 @@ static void drawBootStage(void)
     {
         clearPlanes();
         lastBootStage = bootStage;
+        bootFlash = 2;
     }
 
-    bootFlashShort();
+    bootPulse();
 
     if(bootStage == BOOT_LOGO)
     {
@@ -229,7 +301,7 @@ static void drawBootStage(void)
         if((frame & 63) < 48)
             text1("PRESS START", 14, 13);
         else
-            VDP_clearText(14, 13, 11);
+            clearTextLine(13);
     }
 
     if((frame & 31) == 0)
@@ -250,6 +322,7 @@ static void startSignal(void)
     animFrame = 0;
     setPalettes(scene);
     clearPlanes();
+    clearHScroll();
     PAL_setColor(0, rgb(7,7,7));
 }
 
@@ -441,15 +514,159 @@ static void v02Signal(void)
     text1("SIGNAL 02",15,13);
 }
 
+static void macronic(void)
+{
+    u16 x,y,p,t;
+    p = animFrame >> 2;
+    clearPlanes();
+
+    for(y=3;y<11;y++)
+        for(x=2;x<10;x++)
+            put(BG_B,x,y,((x+y+p)&1)?T_CHECKER:T_LINE,PAL2,0);
+
+    for(y=3;y<11;y++)
+        for(x=30;x<38;x++)
+            put(BG_B,x,y,((x^y^p)&1)?T_CHECKER:T_SCAN,PAL2,0);
+
+    for(y=20;y<26;y++)
+        for(x=2;x<10;x++)
+            put(BG_B,x,y,((x+p)&1)?T_LINE:T_SCAN,PAL2,0);
+
+    for(y=20;y<26;y++)
+        for(x=30;x<38;x++)
+            put(BG_B,x,y,((y+p)&1)?T_LINE:T_CHECKER,PAL2,0);
+
+    for(x=11;x<29;x++)
+    {
+        put(BG_B,x,2,T_SCAN,PAL3,0);
+        put(BG_B,x,25,T_SCAN,PAL3,0);
+    }
+
+    for(y=7;y<21;y++)
+        for(x=12;x<28;x++)
+        {
+            if(((x*y+p)&15)==0) t=T_CROSS;
+            else if(((x+y+p)&7)==0) t=T_DOT;
+            else continue;
+
+            put(BG_A,x,y,t,((x+y)&1)?PAL1:PAL3,1);
+        }
+
+    text1("MACRONIC DREAM ENGINE",9,4);
+    text1("O CARTUCHO ESTA SONHANDO",5,23);
+}
+
+static void v03Tunnel(void)
+{
+    u16 x,y,p,t,pal;
+    u16 lines;
+    p = animFrame >> 2;
+    clearPlanes();
+
+    for(y=6;y<22;y++)
+        for(x=4;x<36;x++)
+        {
+            if(((x+y+p)&3)==0) t=T_BRACKET;
+            else if(((x^y^p)&7)==0) t=T_DOT;
+            else t=T_NOISE;
+
+            pal = ((x+y+p)&1)?PAL2:PAL3;
+            putFlip(BG_B,x,y,t,pal,0,0,(x&1));
+        }
+
+    lines = VDP_getScreenHeight();
+    if(lines > MAX_LINES) lines = MAX_LINES;
+
+    for(y=0;y<lines;y++)
+    {
+        s16 yy = (s16)y - 112;
+        s16 wave = (s16)((y + (p * 3)) & 31);
+
+        if(wave > 15) wave = 31 - wave;
+        if(yy < 0) yy = -yy;
+
+        hscroll[y] = (s16)((wave - 8) * ((yy >> 5) + 1));
+    }
+
+    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
+
+    text1("TUNEL DE SILICIO",11,4);
+    text1("RESPIRA NO PIXEL",10,23);
+}
+
+static void v03Glitch(void)
+{
+    u16 i,x,y,t,pal;
+    clearPlanes();
+
+    for(y=3;y<11;y++)
+        for(x=2;x<38;x++)
+            if(((x+y+animFrame)&1)==0)
+                put(BG_B,x,y,T_CHECKER,((x+y)&1)?PAL1:PAL3,0);
+
+    for(y=17;y<26;y++)
+        for(x=2;x<38;x++)
+            if(((x^y^animFrame)&1)==0)
+                put(BG_B,x,y,T_NOISE,((x+y)&1)?PAL1:PAL2,0);
+
+    for(i=0;i<34;i++)
+    {
+        x = 2 + (rng() % 36);
+        y = 6 + (rng() % 16);
+
+        switch(rng() & 7)
+        {
+            case 0: t=T_BAR; break;
+            case 1: t=T_BAR_H; break;
+            case 2: t=T_BRACKET; break;
+            case 3: t=T_DIAG_A; break;
+            case 4: t=T_DIAG_B; break;
+            case 5: t=T_CROSS; break;
+            case 6: t=T_DOT; break;
+            default:t=T_NOISE; break;
+        }
+
+        pal = (rng() & 1)?PAL1:PAL3;
+        putFlip(BG_A,x,y,t,pal,1,rng()&1,rng()&1);
+    }
+
+    text1("O SINAL ESTA VIVO",11,4);
+    text1("GLITCH CONTROLADO",10,23);
+}
+
+static void breath(void)
+{
+    u16 x,y,p,t,pal;
+    p = animFrame >> 3;
+    clearPlanes();
+
+    for(y=7;y<21;y++)
+        for(x=5;x<35;x++)
+        {
+            if(((x+y+p)&7)==0)
+            {
+                t = ((x^y)&1)?T_DOT:T_CROSS;
+                pal = ((x+p)&2)?PAL2:PAL3;
+                put(BG_A,x,y,t,pal,1);
+            }
+        }
+
+    put(BG_A,19,14,T_BAR_H,PAL1,1);
+    put(BG_A,20,14,T_CROSS,PAL1,1);
+    put(BG_A,21,14,T_BAR_H,PAL1,1);
+    put(BG_A,20,13,T_BAR,PAL1,1);
+    put(BG_A,20,15,T_BAR,PAL1,1);
+
+    text1("BOTOP OBSERVA",13,4);
+    text1("CALMA DENTRO DO RUIDO",8,23);
+}
+
 static void setupScene(u16 s)
 {
     scene = s % SCENE_COUNT;
     sceneTimer = 0;
     setPalettes(scene);
-    VDP_setHorizontalScroll(BG_A,0);
-    VDP_setHorizontalScroll(BG_B,0);
-    VDP_setVerticalScroll(BG_A,0);
-    VDP_setVerticalScroll(BG_B,0);
+    clearHScroll();
     clearPlanes();
 }
 
@@ -462,8 +679,16 @@ static void updateScene(void)
 {
     pulseFlash(animFrame);
 
+    if(scene == SCENE_V03TUNNEL)
+    {
+        v03Tunnel();
+        return;
+    }
+
     if((frame & 3) != 0)
         return;
+
+    clearHScroll();
 
     if(scene == SCENE_DREAM) dream();
     else if(scene == SCENE_WAVE) wave();
@@ -471,7 +696,10 @@ static void updateScene(void)
     else if(scene == SCENE_ORACLE) oracle();
     else if(scene == SCENE_TUNNEL) tunnel();
     else if(scene == SCENE_RAIN) rain();
-    else v02Signal();
+    else if(scene == SCENE_V02) v02Signal();
+    else if(scene == SCENE_MACRONIC) macronic();
+    else if(scene == SCENE_V03GLITCH) v03Glitch();
+    else breath();
 }
 
 int main(bool hard)
@@ -482,12 +710,14 @@ int main(bool hard)
     VDP_init();
     VDP_setScreenWidth320();
     VDP_setPlaneSize(64,32,TRUE);
+    VDP_setScrollingMode(HSCROLL_LINE,VSCROLL_PLANE);
 
     JOY_init();
 
     loadTiles();
     setPalettes(0);
     clearPlanes();
+    clearHScroll();
 
     while(TRUE)
     {
