@@ -2,13 +2,16 @@
 
 /*
     MEGAMANDALA MD
-    v0.5 - FULLSCREEN PULSE RITUAL
+    v0.6 - STATIC BG / FULLSCREEN PULSE
     SGDK / Marsdev
 
-    Sem assets externos.
-    Sem float.
-    Sem malloc.
-    Sem outro .c dentro de src/.
+    Ideia:
+    - Backgrounds permanecem na tela.
+    - Sem deslizamento de BG.
+    - Textos fixos/rituais.
+    - Artefatos reduzidos.
+    - Flashs fullscreen mais fortes por paleta.
+    - START / A / B / C avança cena.
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -25,12 +28,13 @@
 #define T_BAR           (TILE_BASE + 9)
 
 #define SCENE_BOOT      0
-#define SCENE_MANDALA   1
-#define SCENE_TUNNEL    2
-#define SCENE_GLITCH    3
-#define SCENE_VOID      4
-#define SCENE_EYE       5
-#define SCENE_COUNT     6
+#define SCENE_RESPIRA   1
+#define SCENE_GRADE     2
+#define SCENE_CIRCUITO  3
+#define SCENE_MATRIZ    4
+#define SCENE_ORACULO   5
+#define SCENE_EYE       6
+#define SCENE_COUNT     7
 
 #define SCENE_TIME      720
 
@@ -209,31 +213,28 @@ static void setPalettes(u16 mode)
     PAL_setPalette(PAL3, pal3, DMA);
 }
 
-static void flashPalette(u16 f)
+static void pulseFlash(u16 f)
 {
-    u16 flash = f & 63;
+    u16 p = f & 127;
+    u16 c;
 
-    if(flash < 3)
-    {
-        pal0[0] = rgb(7,7,0);
-        pal1[0] = rgb(7,0,7);
-        pal2[0] = rgb(0,7,7);
-        pal3[0] = rgb(7,7,7);
-    }
-    else if(flash == 8 || flash == 9)
-    {
-        pal0[0] = rgb(7,0,0);
-        pal1[0] = rgb(0,7,0);
-        pal2[0] = rgb(0,0,7);
-        pal3[0] = rgb(7,7,0);
-    }
+    if(p < 3)
+        c = rgb(7,7,7);
+    else if(p == 8 || p == 9)
+        c = rgb(7,7,0);
+    else if(p == 16 || p == 17)
+        c = rgb(7,0,7);
+    else if(p == 24 || p == 25)
+        c = rgb(0,7,7);
+    else if((p >= 64) && (p < 68))
+        c = rgb(7,0,0);
     else
-    {
-        pal0[0] = 0x0000;
-        pal1[0] = 0x0000;
-        pal2[0] = 0x0000;
-        pal3[0] = 0x0000;
-    }
+        c = 0x0000;
+
+    pal0[0] = c;
+    pal1[0] = c;
+    pal2[0] = c;
+    pal3[0] = c;
 
     PAL_setPalette(PAL0, pal0, DMA_QUEUE);
     PAL_setPalette(PAL1, pal1, DMA_QUEUE);
@@ -258,144 +259,133 @@ static void fillPlane(VDPPlane plane, u16 tile, u16 pal)
     u16 x, y;
 
     for(y = 0; y < 28; y++)
+    {
         for(x = 0; x < 40; x++)
             put(plane, x, y, tile, pal, 0);
-}
-
-static void drawFrame(void)
-{
-    u16 x, y;
-
-    for(x = 0; x < 40; x++)
-    {
-        put(BG_B, x, 0,  T_LINE, PAL3, 0);
-        put(BG_B, x, 27, T_LINE, PAL3, 0);
-    }
-
-    for(y = 1; y < 27; y++)
-    {
-        put(BG_B, 0,  y, T_BAR, PAL3, 0);
-        put(BG_B, 39, y, T_BAR, PAL3, 0);
     }
 }
 
-static void drawFlashField(u16 f)
+static void drawTextPair(const char *a, const char *b)
+{
+    VDP_drawText(a, 12, 10);
+    VDP_drawText(b, 9, 16);
+}
+
+static void drawSoftFrame(u16 pal)
 {
     u16 x, y;
-    u16 tile;
 
-    if((f & 31) < 4)
+    for(x = 3; x < 37; x++)
     {
-        tile = ((f >> 2) & 1) ? T_SCAN : T_NOISE;
-        fillPlane(BG_B, tile, PAL1);
+        put(BG_B, x, 3,  T_DOT, pal, 0);
+        put(BG_B, x, 24, T_DOT, pal, 0);
     }
-    else if((f & 63) == 20)
+
+    for(y = 4; y < 24; y++)
     {
+        put(BG_B, 3,  y, T_DOT, pal, 0);
+        put(BG_B, 36, y, T_DOT, pal, 0);
+    }
+}
+
+static void bgRespira(void)
+{
+    clearPlanes();
+    fillPlane(BG_B, T_EMPTY, PAL0);
+    drawSoftFrame(PAL2);
+    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+}
+
+static void bgGrade(void)
+{
+    clearPlanes();
+    fillPlane(BG_B, T_EMPTY, PAL0);
+
+    {
+        u16 x, y;
+        for(y = 4; y < 24; y++)
+        {
+            for(x = 4; x < 36; x++)
+            {
+                if(((x + y) & 3) == 0)
+                    put(BG_B, x, y, T_DOT, PAL2, 0);
+                else if(((x ^ y) & 7) == 0)
+                    put(BG_B, x, y, T_GRID, PAL3, 0);
+            }
+        }
+    }
+
+    drawSoftFrame(PAL3);
+    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+}
+
+static void bgCircuito(void)
+{
+    clearPlanes();
+    fillPlane(BG_B, T_EMPTY, PAL0);
+
+    {
+        u16 x, y;
+        for(y = 5; y < 23; y++)
+        {
+            for(x = 2; x < 38; x++)
+            {
+                if((y == 6) || (y == 21))
+                    put(BG_B, x, y, T_LINE, PAL2, 0);
+                else if(((x + (y * 3)) & 11) == 0)
+                    put(BG_B, x, y, T_NOISE, PAL3, 0);
+            }
+        }
+    }
+
+    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+}
+
+static void bgMatriz(void)
+{
+    clearPlanes();
+
+    {
+        u16 x, y;
         for(y = 0; y < 28; y++)
+        {
             for(x = 0; x < 40; x++)
-                put(BG_B, x, y, ((x + y) & 1) ? T_GRID : T_SCAN, PAL2, 0);
-    }
-}
-
-static void drawMandala(u16 f)
-{
-    s16 cx = 20;
-    s16 cy = 14;
-    s16 r;
-    s16 w;
-
-    VDP_clearPlane(BG_A, FALSE);
-
-    for(r = 1; r < 12; r++)
-    {
-        w = (s16)(((f >> 3) + r) & 7);
-        if(w > 3) w = 7 - w;
-
-        put(BG_A, cx + r, cy, T_DOT, PAL1, 1);
-        put(BG_A, cx - r, cy, T_DOT, PAL1, 1);
-        put(BG_A, cx, cy + r, T_DOT, PAL1, 1);
-        put(BG_A, cx, cy - r, T_DOT, PAL1, 1);
-
-        put(BG_A, cx + w, cy + r, T_DIAG_A, PAL3, 1);
-        put(BG_A, cx - w, cy - r, T_DIAG_B, PAL3, 1);
-        put(BG_A, cx + r, cy + w, T_LINE, PAL2, 1);
-        put(BG_A, cx - r, cy - w, T_LINE, PAL2, 1);
-    }
-
-    put(BG_A, 20, 14, T_CROSS, PAL1, 1);
-}
-
-static void drawTunnel(u16 f)
-{
-    u16 x, y;
-
-    VDP_clearPlane(BG_A, FALSE);
-
-    for(y = 3; y < 25; y++)
-    {
-        for(x = 6; x < 34; x++)
-        {
-            if(((x + y + (f >> 3)) & 7) == 0)
-                put(BG_A, x, y, T_DOT, PAL1, 1);
-            else if(((x ^ y ^ (f >> 4)) & 15) == 0)
-                put(BG_A, x, y, T_CROSS, PAL3, 1);
+            {
+                if((x & 1) == 0)
+                    put(BG_B, x, y, T_BAR, PAL1, 0);
+                else
+                    put(BG_B, x, y, T_EMPTY, PAL0, 0);
+            }
         }
     }
 
-    VDP_drawText("TUNEL DE SILICIO", 11, 4);
+    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
 }
 
-static void drawGlitch(u16 f)
+static void bgOraculo(void)
 {
-    u16 i, x, y, t, p;
+    clearPlanes();
+    fillPlane(BG_B, T_EMPTY, PAL0);
 
-    if((f & 3) != 0) return;
-
-    for(i = 0; i < 48; i++)
     {
-        x = rng() % 40;
-        y = rng() % 28;
-
-        switch(rng() & 7)
+        u16 x, y;
+        for(y = 4; y < 24; y++)
         {
-            case 0: t = T_SCAN; break;
-            case 1: t = T_GRID; break;
-            case 2: t = T_NOISE; break;
-            case 3: t = T_CROSS; break;
-            case 4: t = T_DIAG_A; break;
-            case 5: t = T_DIAG_B; break;
-            case 6: t = T_BAR; break;
-            default: t = T_DOT; break;
-        }
-
-        p = (rng() & 3);
-        put(BG_A, x, y, t, p, 1);
-    }
-
-    VDP_drawText("NAO E BUG", 15, 4);
-    VDP_drawText("E ORACULO", 15, 23);
-}
-
-static void drawVoid(u16 f)
-{
-    u16 x, y;
-
-    VDP_clearPlane(BG_A, FALSE);
-
-    for(y = 7; y < 21; y++)
-    {
-        for(x = 5; x < 35; x++)
-        {
-            if(((x + y + (f >> 4)) & 11) == 0)
-                put(BG_A, x, y, ((x ^ y) & 1) ? T_DOT : T_CROSS, PAL3, 1);
+            for(x = 4; x < 36; x++)
+            {
+                if(((x + y) & 1) == 0)
+                    put(BG_B, x, y, T_SCAN, PAL1, 0);
+                if(((x * y) & 31) == 0)
+                    put(BG_B, x, y, T_CROSS, PAL3, 0);
+            }
         }
     }
 
-    VDP_drawText("RESPIRA NO PIXEL", 11, 4);
-    VDP_drawText("O SINAL ESTA VIVO", 11, 23);
+    VDP_drawText("NAO E BUG", 15, 10);
+    VDP_drawText("E ORACULO", 15, 16);
 }
 
-static void drawEye(u16 f)
+static void drawEyeOnce(void)
 {
     s16 cx = 20;
     s16 cy = 14;
@@ -403,9 +393,9 @@ static void drawEye(u16 f)
     s16 d;
     s16 top;
     s16 bot;
-    u16 pulse = 2 + ((f >> 5) & 3);
 
-    VDP_clearPlane(BG_A, FALSE);
+    clearPlanes();
+    fillPlane(BG_B, T_EMPTY, PAL0);
 
     for(i = -13; i <= 13; i++)
     {
@@ -415,25 +405,35 @@ static void drawEye(u16 f)
         top = cy - 5 + (d >> 2);
         bot = cy + 5 - (d >> 2);
 
-        put(BG_A, cx + i, top, T_DIAG_A, PAL2, 1);
-        put(BG_A, cx + i, bot, T_DIAG_B, PAL2, 1);
+        put(BG_A, cx + i, top, T_DIAG_A, PAL3, 1);
+        put(BG_A, cx + i, bot, T_DIAG_B, PAL3, 1);
 
         if((i & 3) == 0)
-            put(BG_A, cx + i, cy, T_SCAN, PAL3, 1);
+            put(BG_A, cx + i, cy, T_SCAN, PAL2, 1);
     }
 
-    for(i = -3; i <= 3; i++)
+    put(BG_A, 18, 14, T_CROSS, PAL1, 1);
+    put(BG_A, 19, 14, T_CROSS, PAL1, 1);
+    put(BG_A, 20, 14, T_DOT,   PAL1, 1);
+    put(BG_A, 21, 14, T_CROSS, PAL1, 1);
+    put(BG_A, 22, 14, T_CROSS, PAL1, 1);
+
+    drawTextPair("TA DE OLHO", "NAO DESLIGUE O SONHO");
+}
+
+static void smallSparks(void)
+{
+    u16 i, x, y;
+
+    if((frame & 15) != 0)
+        return;
+
+    for(i = 0; i < 5; i++)
     {
-        if(i >= -(s16)pulse && i <= (s16)pulse)
-        {
-            put(BG_A, cx + i, cy, T_CROSS, PAL1, 1);
-            put(BG_A, cx + i, cy - 1, T_LINE, PAL1, 1);
-            put(BG_A, cx + i, cy + 1, T_LINE, PAL1, 1);
-        }
+        x = 4 + (rng() % 32);
+        y = 5 + (rng() % 18);
+        put(BG_A, x, y, (rng() & 1) ? T_DOT : T_CROSS, (rng() & 1) ? PAL2 : PAL3, 1);
     }
-
-    VDP_drawText("BOTOP TA DE OLHO", 12, 4);
-    VDP_drawText("NAO DESLIGUE O SONHO", 9, 23);
 }
 
 static void setupScene(u16 s)
@@ -441,42 +441,33 @@ static void setupScene(u16 s)
     scene = s % SCENE_COUNT;
     sceneTimer = 0;
 
-    clearPlanes();
     setPalettes(scene);
+
+    VDP_setHorizontalScroll(BG_A, 0);
+    VDP_setHorizontalScroll(BG_B, 0);
+    VDP_setVerticalScroll(BG_A, 0);
+    VDP_setVerticalScroll(BG_B, 0);
 
     if(scene == SCENE_BOOT)
     {
+        clearPlanes();
         fillPlane(BG_B, T_EMPTY, PAL0);
-        drawFrame();
         VDP_drawText("MEGAMANDALA MD", 13, 11);
-        VDP_drawText("NAO HA FASE", 14, 13);
+        VDP_drawText("NÃO HA FASE", 14, 13);
         VDP_drawText("SO FREQUENCIA", 13, 14);
     }
-    else if(scene == SCENE_MANDALA)
-    {
-        fillPlane(BG_B, T_GRID, PAL2);
-        drawFrame();
-        VDP_drawText("MEGAMANDALA MD", 13, 4);
-    }
-    else if(scene == SCENE_TUNNEL)
-    {
-        fillPlane(BG_B, T_NOISE, PAL2);
-        drawFrame();
-    }
-    else if(scene == SCENE_GLITCH)
-    {
-        fillPlane(BG_B, T_SCAN, PAL1);
-    }
-    else if(scene == SCENE_VOID)
-    {
-        fillPlane(BG_B, T_EMPTY, PAL0);
-        drawFrame();
-    }
+    else if(scene == SCENE_RESPIRA)
+        bgRespira();
+    else if(scene == SCENE_GRADE)
+        bgGrade();
+    else if(scene == SCENE_CIRCUITO)
+        bgCircuito();
+    else if(scene == SCENE_MATRIZ)
+        bgMatriz();
+    else if(scene == SCENE_ORACULO)
+        bgOraculo();
     else
-    {
-        fillPlane(BG_B, T_LINE, PAL2);
-        drawFrame();
-    }
+        drawEyeOnce();
 }
 
 static void nextScene(void)
@@ -486,28 +477,19 @@ static void nextScene(void)
 
 static void updateScene(void)
 {
-    flashPalette(frame);
-
-    if(scene != SCENE_BOOT)
-        drawFlashField(frame);
+    pulseFlash(frame);
 
     if(scene == SCENE_BOOT)
     {
         if((frame & 63) < 4)
-            fillPlane(BG_A, T_SCAN, PAL1);
+            PAL_setColor(0, rgb(7,7,7));
         else
-            VDP_clearPlane(BG_A, FALSE);
+            PAL_setColor(0, 0x0000);
     }
-    else if(scene == SCENE_MANDALA)
-        drawMandala(frame);
-    else if(scene == SCENE_TUNNEL)
-        drawTunnel(frame);
-    else if(scene == SCENE_GLITCH)
-        drawGlitch(frame);
-    else if(scene == SCENE_VOID)
-        drawVoid(frame);
     else
-        drawEye(frame);
+    {
+        smallSparks();
+    }
 }
 
 int main(bool hard)
@@ -538,22 +520,6 @@ int main(bool hard)
             nextScene();
 
         updateScene();
-
-        if(scene == SCENE_TUNNEL)
-        {
-            VDP_setHorizontalScroll(BG_B, frame);
-            VDP_setVerticalScroll(BG_B, frame >> 2);
-        }
-        else if(scene == SCENE_GLITCH)
-        {
-            VDP_setHorizontalScroll(BG_B, frame << 1);
-            VDP_setVerticalScroll(BG_B, frame >> 1);
-        }
-        else
-        {
-            VDP_setHorizontalScroll(BG_B, frame >> 3);
-            VDP_setVerticalScroll(BG_B, 0);
-        }
 
         frame++;
         sceneTimer++;
