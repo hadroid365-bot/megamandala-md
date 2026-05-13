@@ -1,0 +1,28 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    unzip \
+    make \
+    gcc \
+    g++ \
+    texinfo \
+    bison \
+    flex \
+    default-jre \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --recurse-submodules https://github.com/andwn/marsdev.git /tmp/marsdev \
+    && cd /tmp/marsdev \
+    && make sgdk -j2 \
+    && make install \
+    && rm -rf /tmp/marsdev
+
+SHELL ["/bin/bash", "-lc"]
+
+RUN echo 'source /opt/toolchains/mars/mars.sh' >> /etc/bash.bashrc
+
+WORKDIR /workspace
