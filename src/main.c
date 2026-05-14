@@ -2,20 +2,19 @@
 
 /*
     MEGADRONIC
-    v1.4 - SIGNAL MEMORY LITE
+    v1.5a - DIRTY BUFFER SAFE BUILD
 
-    Base: v1.3 estavel
+    Base: v1.4 estavel
+
     Adiciona:
-    - LFSR no lugar do RNG multiplicativo
-    - C segurado aumenta corruption_level
-    - C solto reduz corruption_level aos poucos
-    - Cenas ORACLE / V02 / V03GLITCH / BREATH deixam rastro
-    - Pause vivo: a imagem para, mas o sinal ainda pulsa
-    - HUD: SPD / SCN / COR / AUTO / PAUSE / HYPER
-
-    Sem H-INT.
-    Sem dirty buffer real.
-    Sem __builtin_ctz.
+    - Backbuffer real de tilemap em RAM para BG_B
+    - Dirty rows: só envia linhas sujas via VDP_setTileMapDataRow()
+    - Cenas desenham em RAM usando plot_tile()
+    - Texto/HUD continuam em BG_A via VDP_drawText()
+    - Boot continua direto no VDP
+    - Sem H-INT
+    - Sem dirty rect complexo
+    - Sem __builtin_ctz
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -35,6 +34,10 @@
 #define T_BRACKET       (TILE_BASE + 12)
 
 #define MAX_LINES       240
+
+#define PLANE_WIDTH     64
+#define PLANE_HEIGHT    32
+#define VISIBLE_ROWS    28
 
 #define SCENE_DREAM     0
 #define SCENE_WAVE      1
@@ -63,10 +66,8 @@ static u16 sceneTimer = 0;
 static u16 scene = 0;
 static u16 lastJoy = 0;
 
-/* v1.4: LFSR seed */
 static u16 seed = 0xACE1u;
 
-/* v1.4: signal control */
 static u16 corruption_level = 0;
 static u16 hyperFlash = FALSE;
 static u16 paused = FALSE;
@@ -84,6 +85,12 @@ static u16 pal0[16];
 static u16 pal1[16];
 static u16 pal2[16];
 static u16 pal3[16];
+
+/* v1.5a: backbuffer do BG_B */
+static u16 tile_backbuf[PLANE_WIDTH * PLANE_HEIGHT];
+static u32 dirty_mask = 0;
+
+/* ---------------- TILES ---------------- */
 
 static const u32 tile_empty[8] =
 {
@@ -162,6 +169,8 @@ static const u32 tile_bracket[8] =
     0x03330000,0x03000000,0x03000000,0x03333300
 };
 
+/* ---------------- PALETA ---------------- */
+
 static const u16 baseDark[16] =
 {
     0x0000,0x0222,0x0444,0x0666,
@@ -170,7 +179,7 @@ static const u16 baseDark[16] =
     0x0E00,0x0ACE,0x0A0E,0x0EEE
 };
 
-/* ---------------- CORE UTILS ---------------- */
+/* ---------------- CORE ---------------- */
 
 static u16 fast_noise(void)
 {
@@ -185,19 +194,7 @@ static u16 rgb(u16 r, u16 g, u16 b)
     return (u16)((b << 9) | (g << 5) | (r << 1));
 }
 
-static void put(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio)
-{
-    if(x < 40 && y < 28)
-        VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, 0, 0, tile), x, y);
-}
-
-static void putFlip(VDPPlane plane, u16 x, u16 y, u16 tile, u16 pal, u16 prio, u16 vf, u16 hf)
-{
-    if(x < 40 && y < 28)
-        VDP_setTileMapXY(plane, TILE_ATTR_FULL(pal, prio, vf, hf, tile), x, y);
-}
-
-static void clearPlanes(void)
+static void vdp_clear_planes(void)
 {
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
@@ -211,6 +208,108 @@ static void text1(const char *a, u16 x, u16 y)
 static void clearTextLine(u16 y)
 {
     VDP_drawText("                                        ", 0, y);
+}
+
+static void clearSceneTextArea(void)
+{
+    clearTextLine(4);
+    clearTextLine(12);
+    clearTextLine(13);
+    clearTextLine(14);
+    clearTextLine(15);
+    clearTextLine(23);
+}
+
+static void plot_tile(u16 x, u16 y, u16 tile_attr)
+{
+    if(x >= PLANE_WIDTH)
+        return;
+
+    if(y >= PLANE_HEIGHT)
+        return;
+
+    tile_backbuf[(y * PLANE_WIDTH) + x] = tile_attr;
+    dirty_mask |= (1UL << y);
+}
+
+static void clear_backbuffer(void)
+{
+    u16 i;
+    u16 empty_attr;
+
+    empty_attr = TILE_ATTR_FULL(PAL0, 0, 0, 0, T_EMPTY);
+
+    for(i = 0; i < (PLANE_WIDTH * PLANE_HEIGHT); i++)
+        tile_backbuf[i] = empty_attr;
+
+    dirty_mask = 0x0FFFFFFFUL;
+}
+
+static void dissolve_backbuffer(u16 intensity)
+{
+    u16 x;
+    u16 y;
+    u16 threshold;
+    u16 changed;
+
+    if(intensity == 0)
+        return;
+
+    threshold = intensity;
+
+    if(threshold > 180)
+        threshold = 180;
+
+    for(y = 0; y < VISIBLE_ROWS; y++)
+    {
+        changed = FALSE;
+
+        for(x = 0; x < 40; x++)
+        {
+            if((rng() & 0xFF) < threshold)
+            {
+                tile_backbuf[(y * PLANE_WIDTH) + x] =
+                    TILE_ATTR_FULL(PAL0, 0, 0, 0, T_EMPTY);
+
+                changed = TRUE;
+            }
+        }
+
+        if(changed)
+            dirty_mask |= (1UL << y);
+    }
+}
+
+static void flush_buffer(void)
+{
+    u32 mask;
+    u16 y;
+
+    if(dirty_mask == 0)
+        return;
+
+    mask = dirty_mask;
+    y = 0;
+
+    while(mask)
+    {
+        if(mask & 1)
+        {
+            VDP_setTileMapDataRow(
+                BG_B,
+                &tile_backbuf[y * PLANE_WIDTH],
+                y,
+                0,
+                PLANE_WIDTH,
+                DMA_QUEUE
+            );
+        }
+
+        mask >>= 1;
+        y++;
+    }
+
+    dirty_mask = 0;
 }
 
 static void loadTiles(void)
@@ -251,7 +350,9 @@ static void setPalettes(u16 mode)
 static void clearHScroll(void)
 {
     u16 i;
-    u16 lines = VDP_getScreenHeight();
+    u16 lines;
+
+    lines = VDP_getScreenHeight();
 
     if(lines > MAX_LINES)
         lines = MAX_LINES;
@@ -263,41 +364,15 @@ static void clearHScroll(void)
     VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
 }
 
-/*
-    v1.4: dissolve parcial seletivo.
-    Não substitui clearPlanes().
-    Só é chamado em cenas com memória, e só a cada redraw.
-*/
-static void dissolve_partial(u16 intensity)
-{
-    u16 x;
-    u16 y;
-    u16 threshold;
-
-    if(intensity == 0)
-        return;
-
-    if(intensity > 180)
-        threshold = 180;
-    else
-        threshold = intensity;
-
-    for(y = 0; y < 28; y++)
-    {
-        for(x = 0; x < 40; x++)
-        {
-            if((fast_noise() & 0xFF) < threshold)
-                VDP_setTileMapXY(BG_B, TILE_ATTR_FULL(PAL0, 0, 0, 0, T_EMPTY), x, y);
-        }
-    }
-}
-
 /* ---------------- FLASH / BOOT ---------------- */
 
 static void pulseFlash(u16 f)
 {
-    u16 p = f & 127;
-    u16 c = 0x0000;
+    u16 p;
+    u16 c;
+
+    p = f & 127;
+    c = 0x0000;
 
     if(hyperFlash)
     {
@@ -310,8 +385,11 @@ static void pulseFlash(u16 f)
         else if((f & 15) == 7)
             c = rgb(7,0,0);
 
-        if(corruption_level > 180 && ((f & 5) == 0))
-            c = rgb(7,7,0);
+        if(corruption_level > 180)
+        {
+            if((f & 5) == 0)
+                c = rgb(7,7,0);
+        }
     }
     else
     {
@@ -355,7 +433,7 @@ static void drawBootStage(void)
 {
     if(lastBootStage != bootStage)
     {
-        clearPlanes();
+        vdp_clear_planes();
         lastBootStage = bootStage;
         bootFlash = 2;
     }
@@ -380,11 +458,14 @@ static void drawBootStage(void)
 
     if((frame & 31) == 0)
     {
-        u16 x = rng() % 40;
-        u16 y = rng() % 28;
+        u16 x;
+        u16 y;
+
+        x = rng() % 40;
+        y = rng() % 28;
 
         if((x < 4) || (x > 35) || (y < 4) || (y > 23))
-            put(BG_A, x, y, T_DOT, PAL3, 1);
+            VDP_setTileMapXY(BG_A, TILE_ATTR_FULL(PAL3, 1, 0, 0, T_DOT), x, y);
     }
 }
 
@@ -395,9 +476,16 @@ static void startSignal(void)
     sceneTimer = 0;
     animFrame = 0;
     corruption_level = 0;
+
     setPalettes(scene);
-    clearPlanes();
+
+    VDP_clearPlane(BG_A, TRUE);
+
+    clear_backbuffer();
+    flush_buffer();
+
     clearHScroll();
+
     PAL_setColor(0, rgb(7,7,7));
 }
 
@@ -423,30 +511,44 @@ static void updateBoot(u16 pressed)
     }
 }
 
-/* ---------------- CLEAN SCENES ---------------- */
+/* ---------------- SCENES ---------------- */
 
 static void dream(void)
 {
     u16 x,y,p,t;
+
     p = animFrame >> 3;
-    clearPlanes();
+
+    clear_backbuffer();
+    clearSceneTextArea();
 
     for(y=1;y<10;y++)
+    {
         for(x=2;x<38;x++)
         {
-            if(((x+y+p)&3)==0) t=T_NOISE;
-            else if(((x^y^p)&7)==0) t=T_GRID;
-            else t=T_SCAN;
-            put(BG_B,x,y,t,((x+y)&1)?PAL1:PAL2,0);
+            if(((x+y+p)&3)==0)
+                t=T_NOISE;
+            else if(((x^y^p)&7)==0)
+                t=T_GRID;
+            else
+                t=T_SCAN;
+
+            plot_tile(x,y,TILE_ATTR_FULL(((x+y)&1)?PAL1:PAL2,0,0,0,t));
         }
+    }
 
     for(y=18;y<26;y++)
+    {
         for(x=2;x<38;x++)
         {
-            if(((x*3+y+p)&3)==0) t=T_NOISE;
-            else t=T_SCAN;
-            put(BG_B,x,y,t,PAL1,0);
+            if(((x*3+y+p)&3)==0)
+                t=T_NOISE;
+            else
+                t=T_SCAN;
+
+            plot_tile(x,y,TILE_ATTR_FULL(PAL1,0,0,0,t));
         }
+    }
 
     text1("O CARTUCHO ESTA SONHANDO",7,13);
 }
@@ -454,20 +556,29 @@ static void dream(void)
 static void wave(void)
 {
     u16 x,y,p,t;
+
     p = animFrame >> 3;
-    clearPlanes();
+
+    clear_backbuffer();
+    clearSceneTextArea();
 
     for(y=2;y<26;y++)
+    {
         for(x=4;x<36;x++)
         {
-            if(y>10 && y<17) continue;
+            if(y>10 && y<17)
+                continue;
 
-            if(((x+((y+p)&7))&5)==0) t=T_BAR;
-            else if(((x^y^p)&7)==0) t=T_SCAN;
-            else t=T_NOISE;
+            if(((x+((y+p)&7))&5)==0)
+                t=T_BAR;
+            else if(((x^y^p)&7)==0)
+                t=T_SCAN;
+            else
+                t=T_NOISE;
 
-            put(BG_B,x,y,t,((x+y)&1)?PAL1:PAL2,0);
+            plot_tile(x,y,TILE_ATTR_FULL(((x+y)&1)?PAL1:PAL2,0,0,0,t));
         }
+    }
 
     text1("NAO HA FASE",14,12);
     text1("SO FREQUENCIA",13,15);
@@ -476,133 +587,59 @@ static void wave(void)
 static void matrix(void)
 {
     u16 x,y,p;
+
     p = animFrame >> 2;
-    clearPlanes();
+
+    clear_backbuffer();
+    clearSceneTextArea();
 
     for(y=0;y<28;y++)
+    {
         for(x=0;x<40;x++)
         {
-            if(y>9 && y<18) continue;
+            if(y>9 && y<18)
+                continue;
 
             if(((x+p)&7)==0)
-                put(BG_B,x,y,T_BAR,PAL1,0);
+                plot_tile(x,y,TILE_ATTR_FULL(PAL1,0,0,0,T_BAR));
             else if(((x+y+p)&31)==0)
-                put(BG_B,x,y,T_DOT,PAL3,0);
+                plot_tile(x,y,TILE_ATTR_FULL(PAL3,0,0,0,T_DOT));
         }
+    }
 
     text1("O SINAL ESTA ABERTO",10,13);
 }
 
-static void tunnel(void)
-{
-    u16 x,y,p,dist,t;
-    p = animFrame >> 3;
-    clearPlanes();
-
-    for(y=2;y<26;y++)
-        for(x=2;x<38;x++)
-        {
-            if(y>10 && y<17) continue;
-
-            dist = (x>20)?x-20:20-x;
-            dist += (y>14)?y-14:14-y;
-
-            if(((dist+p)&3)==0) t=T_LINE;
-            else if(((x^y^p)&7)==0) t=((x+y)&1)?T_DIAG_A:T_DIAG_B;
-            else continue;
-
-            put(BG_B,x,y,t,((dist+p)&1)?PAL1:PAL2,0);
-        }
-
-    text1("TUNEL DE FREQUENCIA",10,13);
-}
-
-static void rain(void)
-{
-    u16 x,y,p;
-    p = animFrame >> 2;
-    clearPlanes();
-
-    for(y=0;y<28;y++)
-        for(x=0;x<40;x++)
-        {
-            if(y>8 && y<19) continue;
-
-            if(((x+p)&7)==0)
-                put(BG_B,x,y,T_DOT,PAL1,0);
-            else if(((x+y+p)&31)==0)
-                put(BG_B,x,y,T_BAR,PAL3,0);
-        }
-
-    text1("CHUVA ELETRICA",12,12);
-    text1("O RUIDO TEM MEMORIA",10,15);
-}
-
-static void macronic(void)
-{
-    u16 x,y,p,t;
-    p = animFrame >> 2;
-    clearPlanes();
-
-    for(y=3;y<11;y++)
-        for(x=2;x<10;x++)
-            put(BG_B,x,y,((x+y+p)&1)?T_CHECKER:T_LINE,PAL2,0);
-
-    for(y=3;y<11;y++)
-        for(x=30;x<38;x++)
-            put(BG_B,x,y,((x^y^p)&1)?T_CHECKER:T_SCAN,PAL2,0);
-
-    for(y=20;y<26;y++)
-        for(x=2;x<10;x++)
-            put(BG_B,x,y,((x+p)&1)?T_LINE:T_SCAN,PAL2,0);
-
-    for(y=20;y<26;y++)
-        for(x=30;x<38;x++)
-            put(BG_B,x,y,((y+p)&1)?T_LINE:T_CHECKER,PAL2,0);
-
-    for(x=11;x<29;x++)
-    {
-        put(BG_B,x,2,T_SCAN,PAL3,0);
-        put(BG_B,x,25,T_SCAN,PAL3,0);
-    }
-
-    for(y=7;y<21;y++)
-        for(x=12;x<28;x++)
-        {
-            if(((x*y+p)&15)==0) t=T_CROSS;
-            else if(((x+y+p)&7)==0) t=T_DOT;
-            else continue;
-
-            put(BG_A,x,y,t,((x+y)&1)?PAL1:PAL3,1);
-        }
-
-    text1("MACRONIC DREAM ENGINE",9,4);
-    text1("O CARTUCHO ESTA SONHANDO",5,23);
-}
-
-/* ---------------- MEMORY SCENES ---------------- */
-
 static void oracle(void)
 {
     u16 x,y,p,t;
+
     p = animFrame >> 3;
 
+    clearSceneTextArea();
+
     if(corruption_level == 0)
-        clearPlanes();
+        clear_backbuffer();
     else
-        dissolve_partial(corruption_level >> 2);
+        dissolve_backbuffer(corruption_level >> 2);
 
     for(y=1;y<26;y++)
+    {
         for(x=1;x<39;x++)
         {
-            if(y>=11 && y<=15) continue;
+            if(y>=11 && y<=15)
+                continue;
 
-            if(((x*y+p)&11)==0) t=T_CROSS;
-            else if(((x+y+p)&3)==0) t=T_SCAN;
-            else continue;
+            if(((x*y+p)&11)==0)
+                t=T_CROSS;
+            else if(((x+y+p)&3)==0)
+                t=T_SCAN;
+            else
+                continue;
 
-            put(BG_B,x,y,t,((x^y)&1)?PAL1:PAL3,0);
+            plot_tile(x,y,TILE_ATTR_FULL(((x^y)&1)?PAL1:PAL3,0,0,0,t));
         }
+    }
 
     if(corruption_level < 120)
     {
@@ -618,8 +655,74 @@ static void oracle(void)
         }
 
         if(corruption_level > 200 && (frame & 15) == 0)
-            put(BG_A, 15 + (rng() % 10), 12 + (rng() % 4), T_NOISE, PAL3, 1);
+        {
+            plot_tile(
+                15 + (rng() % 10),
+                12 + (rng() % 4),
+                TILE_ATTR_FULL(PAL3,0,0,0,T_NOISE)
+            );
+        }
     }
+}
+
+static void tunnel(void)
+{
+    u16 x,y,p,dist,t;
+
+    p = animFrame >> 3;
+
+    clear_backbuffer();
+    clearSceneTextArea();
+
+    for(y=2;y<26;y++)
+    {
+        for(x=2;x<38;x++)
+        {
+            if(y>10 && y<17)
+                continue;
+
+            dist = (x>20)?x-20:20-x;
+            dist += (y>14)?y-14:14-y;
+
+            if(((dist+p)&3)==0)
+                t=T_LINE;
+            else if(((x^y^p)&7)==0)
+                t=((x+y)&1)?T_DIAG_A:T_DIAG_B;
+            else
+                continue;
+
+            plot_tile(x,y,TILE_ATTR_FULL(((dist+p)&1)?PAL1:PAL2,0,0,0,t));
+        }
+    }
+
+    text1("TUNEL DE FREQUENCIA",10,13);
+}
+
+static void rain(void)
+{
+    u16 x,y,p;
+
+    p = animFrame >> 2;
+
+    clear_backbuffer();
+    clearSceneTextArea();
+
+    for(y=0;y<28;y++)
+    {
+        for(x=0;x<40;x++)
+        {
+            if(y>8 && y<19)
+                continue;
+
+            if(((x+p)&7)==0)
+                plot_tile(x,y,TILE_ATTR_FULL(PAL1,0,0,0,T_DOT));
+            else if(((x+y+p)&31)==0)
+                plot_tile(x,y,TILE_ATTR_FULL(PAL3,0,0,0,T_BAR));
+        }
+    }
+
+    text1("CHUVA ELETRICA",12,12);
+    text1("O RUIDO TEM MEMORIA",10,15);
 }
 
 static void v02Signal(void)
@@ -629,38 +732,186 @@ static void v02Signal(void)
 
     p = animFrame >> 1;
 
+    clearSceneTextArea();
+
     if(corruption_level == 0)
-        clearPlanes();
+        clear_backbuffer();
     else
-        dissolve_partial(corruption_level >> 3);
+        dissolve_backbuffer(corruption_level >> 3);
 
     for(y=0;y<12;y++)
+    {
         for(x=0;x<40;x++)
         {
-            if(((x+y+p)&1)==0) t=T_NOISE;
-            else if(((x^y^p)&3)==0) t=T_GRID;
-            else t=T_SCAN;
+            if(((x+y+p)&1)==0)
+                t=T_NOISE;
+            else if(((x^y^p)&3)==0)
+                t=T_GRID;
+            else
+                t=T_SCAN;
 
             pal = ((x+y+p)&2) ? PAL1 : PAL3;
-            put(BG_B,x,y,t,pal,0);
+            plot_tile(x,y,TILE_ATTR_FULL(pal,0,0,0,t));
         }
+    }
 
     for(y=15;y<28;y++)
+    {
         for(x=0;x<40;x++)
         {
-            if(((x*3+y+p)&1)==0) t=T_SCAN;
-            else if(((x+y+p)&3)==0) t=T_CROSS;
-            else t=T_NOISE;
+            if(((x*3+y+p)&1)==0)
+                t=T_SCAN;
+            else if(((x+y+p)&3)==0)
+                t=T_CROSS;
+            else
+                t=T_NOISE;
 
             pal = ((x^y^p)&2) ? PAL2 : PAL1;
-            put(BG_B,x,y,t,pal,0);
+            plot_tile(x,y,TILE_ATTR_FULL(pal,0,0,0,t));
         }
+    }
 
     textOffset = 0;
+
     if(corruption_level > 100)
         textOffset = (s16)(rng() & 3) - 1;
 
     text1("SIGNAL 02", (u16)(15 + textOffset), 13);
+}
+
+static void macronic(void)
+{
+    u16 x,y,p,t;
+
+    p = animFrame >> 2;
+
+    clear_backbuffer();
+    clearSceneTextArea();
+
+    for(y=3;y<11;y++)
+    {
+        for(x=2;x<10;x++)
+        {
+            t = ((x+y+p)&1)?T_CHECKER:T_LINE;
+            plot_tile(x,y,TILE_ATTR_FULL(PAL2,0,0,0,t));
+        }
+    }
+
+    for(y=3;y<11;y++)
+    {
+        for(x=30;x<38;x++)
+        {
+            t = ((x^y^p)&1)?T_CHECKER:T_SCAN;
+            plot_tile(x,y,TILE_ATTR_FULL(PAL2,0,0,0,t));
+        }
+    }
+
+    for(y=20;y<26;y++)
+    {
+        for(x=2;x<10;x++)
+        {
+            t = ((x+p)&1)?T_LINE:T_SCAN;
+            plot_tile(x,y,TILE_ATTR_FULL(PAL2,0,0,0,t));
+        }
+    }
+
+    for(y=20;y<26;y++)
+    {
+        for(x=30;x<38;x++)
+        {
+            t = ((y+p)&1)?T_LINE:T_CHECKER;
+            plot_tile(x,y,TILE_ATTR_FULL(PAL2,0,0,0,t));
+        }
+    }
+
+    for(x=11;x<29;x++)
+    {
+        plot_tile(x,2,TILE_ATTR_FULL(PAL3,0,0,0,T_SCAN));
+        plot_tile(x,25,TILE_ATTR_FULL(PAL3,0,0,0,T_SCAN));
+    }
+
+    for(y=7;y<21;y++)
+    {
+        for(x=12;x<28;x++)
+        {
+            if(((x*y+p)&15)==0)
+                t=T_CROSS;
+            else if(((x+y+p)&7)==0)
+                t=T_DOT;
+            else
+                continue;
+
+            plot_tile(x,y,TILE_ATTR_FULL(((x+y)&1)?PAL1:PAL3,0,0,0,t));
+        }
+    }
+
+    text1("MACRONIC DREAM ENGINE",9,4);
+    text1("O CARTUCHO ESTA SONHANDO",5,23);
+}
+
+static void v03TunnelTiles(void)
+{
+    u16 x,y,p,t,pal;
+
+    p = animFrame >> 2;
+
+    clear_backbuffer();
+    clearSceneTextArea();
+
+    for(y=6;y<22;y++)
+    {
+        for(x=4;x<36;x++)
+        {
+            if(((x+y+p)&3)==0)
+                t=T_BRACKET;
+            else if(((x^y^p)&7)==0)
+                t=T_DOT;
+            else
+                t=T_NOISE;
+
+            pal = ((x+y+p)&1)?PAL2:PAL3;
+            plot_tile(x,y,TILE_ATTR_FULL(pal,0,0,(x&1),t));
+        }
+    }
+
+    text1("TUNEL DE SILICIO",11,4);
+    text1("RESPIRA NO PIXEL",10,23);
+}
+
+static void v03TunnelScroll(void)
+{
+    u16 y;
+    u16 lines;
+    u16 p;
+
+    p = animFrame >> 2;
+
+    lines = VDP_getScreenHeight();
+
+    if(lines > MAX_LINES)
+        lines = MAX_LINES;
+
+    for(y=0;y<lines;y++)
+    {
+        s16 yy;
+        s16 wave;
+
+        yy = (s16)y - 112;
+        wave = (s16)((y + (p * 3)) & 31);
+
+        if(wave > 15)
+            wave = 31 - wave;
+
+        if(yy < 0)
+            yy = -yy;
+
+        hscroll[y] = (s16)((wave - 8) * ((yy >> 5) + 1));
+
+        if(corruption_level > 150)
+            hscroll[y] += (s16)(rng() & 7) - 4;
+    }
+
+    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
 }
 
 static void v03Glitch(void)
@@ -671,12 +922,15 @@ static void v03Glitch(void)
     u16 vf;
     u16 hf;
 
+    clearSceneTextArea();
+
     if(corruption_level == 0)
-        clearPlanes();
+        clear_backbuffer();
     else
-        dissolve_partial(corruption_level >> 1);
+        dissolve_backbuffer(corruption_level >> 1);
 
     density = 34 + (corruption_level >> 2);
+
     if(density > 98)
         density = 98;
 
@@ -710,7 +964,7 @@ static void v03Glitch(void)
             hf = rng() & 1;
         }
 
-        putFlip(BG_A,x,y,t,pal,1,vf,hf);
+        plot_tile(x,y,TILE_ATTR_FULL(pal,0,vf,hf,t));
     }
 
     if(corruption_level < 200)
@@ -723,29 +977,34 @@ static void v03Glitch(void)
 static void breath(void)
 {
     u16 x,y,p,t,pal;
+
     p = animFrame >> 3;
 
+    clearSceneTextArea();
+
     if(corruption_level < 50)
-        clearPlanes();
+        clear_backbuffer();
     else
-        dissolve_partial(corruption_level >> 3);
+        dissolve_backbuffer(corruption_level >> 3);
 
     for(y=7;y<21;y++)
+    {
         for(x=5;x<35;x++)
         {
             if(((x+y+p)&7)==0)
             {
                 t = ((x^y)&1)?T_DOT:T_CROSS;
                 pal = ((x+p)&2)?PAL2:PAL3;
-                put(BG_A,x,y,t,pal,1);
+                plot_tile(x,y,TILE_ATTR_FULL(pal,0,0,0,t));
             }
         }
+    }
 
-    put(BG_A,19,14,T_BAR_H,PAL1,1);
-    put(BG_A,20,14,T_CROSS,PAL1,1);
-    put(BG_A,21,14,T_BAR_H,PAL1,1);
-    put(BG_A,20,13,T_BAR,PAL1,1);
-    put(BG_A,20,15,T_BAR,PAL1,1);
+    plot_tile(19,14,TILE_ATTR_FULL(PAL1,0,0,0,T_BAR_H));
+    plot_tile(20,14,TILE_ATTR_FULL(PAL1,0,0,0,T_CROSS));
+    plot_tile(21,14,TILE_ATTR_FULL(PAL1,0,0,0,T_BAR_H));
+    plot_tile(20,13,TILE_ATTR_FULL(PAL1,0,0,0,T_BAR));
+    plot_tile(20,15,TILE_ATTR_FULL(PAL1,0,0,0,T_BAR));
 
     if(corruption_level < 100)
     {
@@ -762,52 +1021,6 @@ static void breath(void)
     }
 }
 
-static void v03Tunnel(void)
-{
-    u16 x,y,p,t,pal;
-    u16 lines;
-
-    p = animFrame >> 2;
-    clearPlanes();
-
-    for(y=6;y<22;y++)
-        for(x=4;x<36;x++)
-        {
-            if(((x+y+p)&3)==0) t=T_BRACKET;
-            else if(((x^y^p)&7)==0) t=T_DOT;
-            else t=T_NOISE;
-
-            pal = ((x+y+p)&1)?PAL2:PAL3;
-            putFlip(BG_B,x,y,t,pal,0,0,(x&1));
-        }
-
-    lines = VDP_getScreenHeight();
-    if(lines > MAX_LINES)
-        lines = MAX_LINES;
-
-    for(y=0;y<lines;y++)
-    {
-        s16 yy = (s16)y - 112;
-        s16 wave = (s16)((y + (p * 3)) & 31);
-
-        if(wave > 15)
-            wave = 31 - wave;
-
-        if(yy < 0)
-            yy = -yy;
-
-        hscroll[y] = (s16)((wave - 8) * ((yy >> 5) + 1));
-
-        if(corruption_level > 150)
-            hscroll[y] += (s16)(rng() & 7) - 4;
-    }
-
-    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
-
-    text1("TUNEL DE SILICIO",11,4);
-    text1("RESPIRA NO PIXEL",10,23);
-}
-
 /* ---------------- HUD / CONTROL ---------------- */
 
 static void drawHUD(void)
@@ -816,21 +1029,32 @@ static void drawHUD(void)
     char scn[7];
     char cor[8];
 
-    spd[0] = 'S'; spd[1] = 'P'; spd[2] = 'D'; spd[3] = ' '; spd[4] = '0' + animSpeed; spd[5] = 0;
+    spd[0] = 'S';
+    spd[1] = 'P';
+    spd[2] = 'D';
+    spd[3] = ' ';
+    spd[4] = '0' + animSpeed;
+    spd[5] = 0;
 
-    scn[0] = 'S'; scn[1] = 'C'; scn[2] = 'N'; scn[3] = ' ';
+    scn[0] = 'S';
+    scn[1] = 'C';
+    scn[2] = 'N';
+    scn[3] = ' ';
     scn[4] = '0' + ((scene + 1) / 10);
     scn[5] = '0' + ((scene + 1) % 10);
     scn[6] = 0;
 
-    cor[0] = 'C'; cor[1] = 'O'; cor[2] = 'R'; cor[3] = ' ';
+    cor[0] = 'C';
+    cor[1] = 'O';
+    cor[2] = 'R';
+    cor[3] = ' ';
     cor[4] = '0' + ((corruption_level / 100) % 10);
     cor[5] = '0' + ((corruption_level / 10) % 10);
     cor[6] = '0' + (corruption_level % 10);
     cor[7] = 0;
 
-    VDP_drawText("                                        ", 0, 26);
-    VDP_drawText("                                        ", 0, 27);
+    clearTextLine(26);
+    clearTextLine(27);
 
     VDP_drawText(spd, 0, 26);
     VDP_drawText(scn, 0, 27);
@@ -845,6 +1069,8 @@ static void drawHUD(void)
         VDP_drawText("PAUSE", 34, 27);
     else if(hyperFlash)
         VDP_drawText("HYPER", 34, 27);
+    else if(corruption_level > 150)
+        VDP_drawText("DIRTY", 34, 27);
     else
         VDP_drawText("     ", 34, 27);
 }
@@ -853,9 +1079,11 @@ static void drawPauseLife(void)
 {
     if((frame & 63) < 32)
     {
-        put(BG_A,19,14,T_DOT,PAL3,1);
-        put(BG_A,20,14,T_CROSS,PAL1,1);
-        put(BG_A,21,14,T_DOT,PAL3,1);
+        VDP_setTileMapXY(BG_A, TILE_ATTR_FULL(PAL3, 1, 0, 0, T_DOT), 36, 27);
+    }
+    else
+    {
+        VDP_setTileMapXY(BG_A, TILE_ATTR_FULL(PAL0, 0, 0, 0, T_EMPTY), 36, 27);
     }
 
     if((frame & 31) < 20)
@@ -868,9 +1096,14 @@ static void setupScene(u16 s)
 {
     scene = s % SCENE_COUNT;
     sceneTimer = 0;
+
     setPalettes(scene);
     clearHScroll();
-    clearPlanes();
+
+    VDP_clearPlane(BG_A, TRUE);
+
+    clear_backbuffer();
+    flush_buffer();
 }
 
 static void nextScene(void)
@@ -891,7 +1124,12 @@ static void updateScene(void)
 
     if(scene == SCENE_V03TUNNEL)
     {
-        v03Tunnel();
+        if((frame & 3) == 0)
+            v03TunnelTiles();
+
+        v03TunnelScroll();
+
+        flush_buffer();
         drawHUD();
         return;
     }
@@ -902,25 +1140,31 @@ static void updateScene(void)
         return;
     }
 
-    if(scene != SCENE_ORACLE &&
-       scene != SCENE_V02 &&
-       scene != SCENE_V03GLITCH &&
-       scene != SCENE_BREATH)
-    {
+    if(scene != SCENE_V03GLITCH && corruption_level < 100)
         clearHScroll();
-    }
 
-    if(scene == SCENE_DREAM) dream();
-    else if(scene == SCENE_WAVE) wave();
-    else if(scene == SCENE_MATRIX) matrix();
-    else if(scene == SCENE_ORACLE) oracle();
-    else if(scene == SCENE_TUNNEL) tunnel();
-    else if(scene == SCENE_RAIN) rain();
-    else if(scene == SCENE_V02) v02Signal();
-    else if(scene == SCENE_MACRONIC) macronic();
-    else if(scene == SCENE_V03GLITCH) v03Glitch();
-    else breath();
+    if(scene == SCENE_DREAM)
+        dream();
+    else if(scene == SCENE_WAVE)
+        wave();
+    else if(scene == SCENE_MATRIX)
+        matrix();
+    else if(scene == SCENE_ORACLE)
+        oracle();
+    else if(scene == SCENE_TUNNEL)
+        tunnel();
+    else if(scene == SCENE_RAIN)
+        rain();
+    else if(scene == SCENE_V02)
+        v02Signal();
+    else if(scene == SCENE_MACRONIC)
+        macronic();
+    else if(scene == SCENE_V03GLITCH)
+        v03Glitch();
+    else
+        breath();
 
+    flush_buffer();
     drawHUD();
 }
 
@@ -940,8 +1184,14 @@ int main(bool hard)
 
     loadTiles();
     setPalettes(0);
-    clearPlanes();
+
+    vdp_clear_planes();
+
+    clear_backbuffer();
+    flush_buffer();
     clearHScroll();
+
+    seed = 0xACE1u;
 
     while(TRUE)
     {
