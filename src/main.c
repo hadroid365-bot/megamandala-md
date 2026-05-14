@@ -2,14 +2,16 @@
 
 /*
     MEGADRONIC
-    v1.2 - CLEAN BOOT FIX + V0.3 LOOPS WITHOUT MANDALA
+    v1.3 - SIGNAL CONTROL BUILD
 
-    Corrige:
-    - pulso branco do boot curto de verdade
-    - cada tela do boot substitui a anterior
-    - PRESS START aparece corretamente
-    - insere estética v0.3 no final
-    - remove mandala
+    Base: v1.2 estavel
+    Adiciona:
+    - B = pausa
+    - C segurado = hyperflash
+    - START = auto/manual
+    - A = proxima cena
+    - UP/DOWN = velocidade
+    - HUD discreto: SPD / SCN / AUTO / PAUSE
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -63,6 +65,10 @@ static u16 bootStage = BOOT_LOGO;
 static u16 bootTimer = 0;
 static u16 lastBootStage = 999;
 static u16 bootFlash = 2;
+
+static u16 paused = FALSE;
+static u16 autoMode = TRUE;
+static u16 hyperFlash = FALSE;
 
 static s16 hscroll[MAX_LINES];
 
@@ -247,11 +253,21 @@ static void pulseFlash(u16 f)
     u16 p = f & 127;
     u16 c = 0x0000;
 
-    if(p < 2) c = rgb(7,7,7);
-    else if(p == 12) c = rgb(7,7,0);
-    else if(p == 24 || p == 28) c = rgb(7,0,7);
-    else if(p == 48) c = rgb(0,7,7);
-    else if((p >= 96) && (p < 100)) c = rgb(7,0,0);
+    if(hyperFlash)
+    {
+        if((f & 3) == 0) c = rgb(7,7,7);
+        else if((f & 7) == 1) c = rgb(7,0,7);
+        else if((f & 7) == 3) c = rgb(0,7,7);
+        else if((f & 15) == 7) c = rgb(7,0,0);
+    }
+    else
+    {
+        if(p < 2) c = rgb(7,7,7);
+        else if(p == 12) c = rgb(7,7,0);
+        else if(p == 24 || p == 28) c = rgb(7,0,7);
+        else if(p == 48) c = rgb(0,7,7);
+        else if((p >= 96) && (p < 100)) c = rgb(7,0,0);
+    }
 
     pal0[0] = c;
     pal1[0] = c;
@@ -661,6 +677,33 @@ static void breath(void)
     text1("CALMA DENTRO DO RUIDO",8,23);
 }
 
+static void drawHUD(void)
+{
+    char s1[8];
+    char s2[8];
+
+    VDP_drawText("        ", 0, 26);
+    VDP_drawText("        ", 0, 27);
+
+    sprintf(s1, "SPD %d", animSpeed);
+    sprintf(s2, "SCN %02d", scene + 1);
+
+    VDP_drawText(s1, 0, 26);
+    VDP_drawText(s2, 0, 27);
+
+    if(autoMode)
+        VDP_drawText("AUTO", 35, 26);
+    else
+        VDP_drawText("MAN ", 35, 26);
+
+    if(paused)
+        VDP_drawText("PAUSE", 34, 27);
+    else if(hyperFlash)
+        VDP_drawText("HYPER", 34, 27);
+    else
+        VDP_drawText("     ", 34, 27);
+}
+
 static void setupScene(u16 s)
 {
     scene = s % SCENE_COUNT;
@@ -682,11 +725,15 @@ static void updateScene(void)
     if(scene == SCENE_V03TUNNEL)
     {
         v03Tunnel();
+        drawHUD();
         return;
     }
 
     if((frame & 3) != 0)
+    {
+        drawHUD();
         return;
+    }
 
     clearHScroll();
 
@@ -700,6 +747,8 @@ static void updateScene(void)
     else if(scene == SCENE_MACRONIC) macronic();
     else if(scene == SCENE_V03GLITCH) v03Glitch();
     else breath();
+
+    drawHUD();
 }
 
 int main(bool hard)
@@ -731,6 +780,8 @@ int main(bool hard)
         }
         else
         {
+            hyperFlash = (joy & BUTTON_C) ? TRUE : FALSE;
+
             if(pressed & BUTTON_UP)
             {
                 if(animSpeed < 6) animSpeed++;
@@ -741,16 +792,33 @@ int main(bool hard)
                 if(animSpeed > 1) animSpeed--;
             }
 
-            if(pressed & (BUTTON_START | BUTTON_A | BUTTON_B | BUTTON_C))
+            if(pressed & BUTTON_B)
+                paused = !paused;
+
+            if(pressed & BUTTON_START)
+                autoMode = !autoMode;
+
+            if(pressed & BUTTON_A)
                 nextScene();
 
-            if(sceneTimer > SCENE_TIME)
+            if((pressed & (BUTTON_X | BUTTON_Y | BUTTON_Z)) != 0)
                 nextScene();
+
+            if(autoMode && !paused)
+            {
+                if(sceneTimer > SCENE_TIME)
+                    nextScene();
+            }
 
             updateScene();
 
-            animFrame += animSpeed;
-            sceneTimer++;
+            if(!paused)
+            {
+                animFrame += animSpeed;
+
+                if(autoMode)
+                    sceneTimer++;
+            }
         }
 
         frame++;
