@@ -2,16 +2,20 @@
 
 /*
     MEGADRONIC
-    v1.3 - SIGNAL CONTROL BUILD
+    v1.4 - SIGNAL MEMORY LITE
 
-    Base: v1.2 estavel
+    Base: v1.3 estavel
     Adiciona:
-    - B = pausa
-    - C segurado = hyperflash
-    - START = auto/manual
-    - A = proxima cena
-    - UP/DOWN = velocidade
-    - HUD discreto: SPD / SCN / AUTO / PAUSE
+    - LFSR no lugar do RNG multiplicativo
+    - C segurado aumenta corruption_level
+    - C solto reduz corruption_level aos poucos
+    - Cenas ORACLE / V02 / V03GLITCH / BREATH deixam rastro
+    - Pause vivo: a imagem para, mas o sinal ainda pulsa
+    - HUD: SPD / SCN / COR / AUTO / PAUSE / HYPER
+
+    Sem H-INT.
+    Sem dirty buffer real.
+    Sem __builtin_ctz.
 */
 
 #define TILE_BASE       TILE_USER_INDEX
@@ -58,17 +62,21 @@ static u16 animSpeed = 1;
 static u16 sceneTimer = 0;
 static u16 scene = 0;
 static u16 lastJoy = 0;
-static u16 seed = 0xB00D;
+
+/* v1.4: LFSR seed */
+static u16 seed = 0xACE1u;
+
+/* v1.4: signal control */
+static u16 corruption_level = 0;
+static u16 hyperFlash = FALSE;
+static u16 paused = FALSE;
+static u16 autoMode = TRUE;
 
 static u16 inBoot = TRUE;
 static u16 bootStage = BOOT_LOGO;
 static u16 bootTimer = 0;
 static u16 lastBootStage = 999;
 static u16 bootFlash = 2;
-
-static u16 paused = FALSE;
-static u16 autoMode = TRUE;
-static u16 hyperFlash = FALSE;
 
 static s16 hscroll[MAX_LINES];
 
@@ -77,7 +85,10 @@ static u16 pal1[16];
 static u16 pal2[16];
 static u16 pal3[16];
 
-static const u32 tile_empty[8] = {0,0,0,0,0,0,0,0};
+static const u32 tile_empty[8] =
+{
+    0,0,0,0,0,0,0,0
+};
 
 static const u32 tile_dot[8] =
 {
@@ -159,11 +170,15 @@ static const u16 baseDark[16] =
     0x0E00,0x0ACE,0x0A0E,0x0EEE
 };
 
-static u16 rng(void)
+/* ---------------- CORE UTILS ---------------- */
+
+static u16 fast_noise(void)
 {
-    seed = (u16)(seed * 109u + 89u);
+    seed = (u16)((seed >> 1) ^ ((-(seed & 1u)) & 0xB400u));
     return seed;
 }
+
+#define rng() fast_noise()
 
 static u16 rgb(u16 r, u16 g, u16 b)
 {
@@ -248,6 +263,37 @@ static void clearHScroll(void)
     VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
 }
 
+/*
+    v1.4: dissolve parcial seletivo.
+    Não substitui clearPlanes().
+    Só é chamado em cenas com memória, e só a cada redraw.
+*/
+static void dissolve_partial(u16 intensity)
+{
+    u16 x;
+    u16 y;
+    u16 threshold;
+
+    if(intensity == 0)
+        return;
+
+    if(intensity > 180)
+        threshold = 180;
+    else
+        threshold = intensity;
+
+    for(y = 0; y < 28; y++)
+    {
+        for(x = 0; x < 40; x++)
+        {
+            if((fast_noise() & 0xFF) < threshold)
+                VDP_setTileMapXY(BG_B, TILE_ATTR_FULL(PAL0, 0, 0, 0, T_EMPTY), x, y);
+        }
+    }
+}
+
+/* ---------------- FLASH / BOOT ---------------- */
+
 static void pulseFlash(u16 f)
 {
     u16 p = f & 127;
@@ -255,18 +301,30 @@ static void pulseFlash(u16 f)
 
     if(hyperFlash)
     {
-        if((f & 3) == 0) c = rgb(7,7,7);
-        else if((f & 7) == 1) c = rgb(7,0,7);
-        else if((f & 7) == 3) c = rgb(0,7,7);
-        else if((f & 15) == 7) c = rgb(7,0,0);
+        if((f & 3) == 0)
+            c = rgb(7,7,7);
+        else if((f & 7) == 1)
+            c = rgb(7,0,7);
+        else if((f & 7) == 3)
+            c = rgb(0,7,7);
+        else if((f & 15) == 7)
+            c = rgb(7,0,0);
+
+        if(corruption_level > 180 && ((f & 5) == 0))
+            c = rgb(7,7,0);
     }
     else
     {
-        if(p < 2) c = rgb(7,7,7);
-        else if(p == 12) c = rgb(7,7,0);
-        else if(p == 24 || p == 28) c = rgb(7,0,7);
-        else if(p == 48) c = rgb(0,7,7);
-        else if((p >= 96) && (p < 100)) c = rgb(7,0,0);
+        if(p < 2)
+            c = rgb(7,7,7);
+        else if(p == 12)
+            c = rgb(7,7,0);
+        else if(p == 24 || p == 28)
+            c = rgb(7,0,7);
+        else if(p == 48)
+            c = rgb(0,7,7);
+        else if((p >= 96) && (p < 100))
+            c = rgb(7,0,0);
     }
 
     pal0[0] = c;
@@ -336,6 +394,7 @@ static void startSignal(void)
     scene = SCENE_DREAM;
     sceneTimer = 0;
     animFrame = 0;
+    corruption_level = 0;
     setPalettes(scene);
     clearPlanes();
     clearHScroll();
@@ -363,6 +422,8 @@ static void updateBoot(u16 pressed)
         }
     }
 }
+
+/* ---------------- CLEAN SCENES ---------------- */
 
 static void dream(void)
 {
@@ -432,28 +493,6 @@ static void matrix(void)
     text1("O SINAL ESTA ABERTO",10,13);
 }
 
-static void oracle(void)
-{
-    u16 x,y,p,t;
-    p = animFrame >> 3;
-    clearPlanes();
-
-    for(y=1;y<26;y++)
-        for(x=1;x<39;x++)
-        {
-            if(y>=11 && y<=15) continue;
-
-            if(((x*y+p)&11)==0) t=T_CROSS;
-            else if(((x+y+p)&3)==0) t=T_SCAN;
-            else continue;
-
-            put(BG_B,x,y,t,((x^y)&1)?PAL1:PAL3,0);
-        }
-
-    text1("NAO E BUG",15,12);
-    text1("E ORACULO",15,15);
-}
-
 static void tunnel(void)
 {
     u16 x,y,p,dist,t;
@@ -499,37 +538,6 @@ static void rain(void)
     text1("O RUIDO TEM MEMORIA",10,15);
 }
 
-static void v02Signal(void)
-{
-    u16 x,y,p,t,pal;
-    p = animFrame >> 1;
-    clearPlanes();
-
-    for(y=0;y<12;y++)
-        for(x=0;x<40;x++)
-        {
-            if(((x+y+p)&1)==0) t=T_NOISE;
-            else if(((x^y^p)&3)==0) t=T_GRID;
-            else t=T_SCAN;
-
-            pal = ((x+y+p)&2) ? PAL1 : PAL3;
-            put(BG_B,x,y,t,pal,0);
-        }
-
-    for(y=15;y<28;y++)
-        for(x=0;x<40;x++)
-        {
-            if(((x*3+y+p)&1)==0) t=T_SCAN;
-            else if(((x+y+p)&3)==0) t=T_CROSS;
-            else t=T_NOISE;
-
-            pal = ((x^y^p)&2) ? PAL2 : PAL1;
-            put(BG_B,x,y,t,pal,0);
-        }
-
-    text1("SIGNAL 02",15,13);
-}
-
 static void macronic(void)
 {
     u16 x,y,p,t;
@@ -572,65 +580,114 @@ static void macronic(void)
     text1("O CARTUCHO ESTA SONHANDO",5,23);
 }
 
-static void v03Tunnel(void)
+/* ---------------- MEMORY SCENES ---------------- */
+
+static void oracle(void)
 {
-    u16 x,y,p,t,pal;
-    u16 lines;
-    p = animFrame >> 2;
-    clearPlanes();
+    u16 x,y,p,t;
+    p = animFrame >> 3;
 
-    for(y=6;y<22;y++)
-        for(x=4;x<36;x++)
+    if(corruption_level == 0)
+        clearPlanes();
+    else
+        dissolve_partial(corruption_level >> 2);
+
+    for(y=1;y<26;y++)
+        for(x=1;x<39;x++)
         {
-            if(((x+y+p)&3)==0) t=T_BRACKET;
-            else if(((x^y^p)&7)==0) t=T_DOT;
-            else t=T_NOISE;
+            if(y>=11 && y<=15) continue;
 
-            pal = ((x+y+p)&1)?PAL2:PAL3;
-            putFlip(BG_B,x,y,t,pal,0,0,(x&1));
+            if(((x*y+p)&11)==0) t=T_CROSS;
+            else if(((x+y+p)&3)==0) t=T_SCAN;
+            else continue;
+
+            put(BG_B,x,y,t,((x^y)&1)?PAL1:PAL3,0);
         }
 
-    lines = VDP_getScreenHeight();
-    if(lines > MAX_LINES) lines = MAX_LINES;
-
-    for(y=0;y<lines;y++)
+    if(corruption_level < 120)
     {
-        s16 yy = (s16)y - 112;
-        s16 wave = (s16)((y + (p * 3)) & 31);
-
-        if(wave > 15) wave = 31 - wave;
-        if(yy < 0) yy = -yy;
-
-        hscroll[y] = (s16)((wave - 8) * ((yy >> 5) + 1));
+        text1("NAO E BUG",15,12);
+        text1("E ORACULO",15,15);
     }
+    else
+    {
+        if((frame & 7) < 5)
+        {
+            text1("NAO ...",15,12);
+            text1("E ...",15,15);
+        }
 
-    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
+        if(corruption_level > 200 && (frame & 15) == 0)
+            put(BG_A, 15 + (rng() % 10), 12 + (rng() % 4), T_NOISE, PAL3, 1);
+    }
+}
 
-    text1("TUNEL DE SILICIO",11,4);
-    text1("RESPIRA NO PIXEL",10,23);
+static void v02Signal(void)
+{
+    u16 x,y,p,t,pal;
+    s16 textOffset;
+
+    p = animFrame >> 1;
+
+    if(corruption_level == 0)
+        clearPlanes();
+    else
+        dissolve_partial(corruption_level >> 3);
+
+    for(y=0;y<12;y++)
+        for(x=0;x<40;x++)
+        {
+            if(((x+y+p)&1)==0) t=T_NOISE;
+            else if(((x^y^p)&3)==0) t=T_GRID;
+            else t=T_SCAN;
+
+            pal = ((x+y+p)&2) ? PAL1 : PAL3;
+            put(BG_B,x,y,t,pal,0);
+        }
+
+    for(y=15;y<28;y++)
+        for(x=0;x<40;x++)
+        {
+            if(((x*3+y+p)&1)==0) t=T_SCAN;
+            else if(((x+y+p)&3)==0) t=T_CROSS;
+            else t=T_NOISE;
+
+            pal = ((x^y^p)&2) ? PAL2 : PAL1;
+            put(BG_B,x,y,t,pal,0);
+        }
+
+    textOffset = 0;
+    if(corruption_level > 100)
+        textOffset = (s16)(rng() & 3) - 1;
+
+    text1("SIGNAL 02", (u16)(15 + textOffset), 13);
 }
 
 static void v03Glitch(void)
 {
     u16 i,x,y,t,pal;
-    clearPlanes();
+    u16 density;
+    u16 entropyMask;
+    u16 vf;
+    u16 hf;
 
-    for(y=3;y<11;y++)
-        for(x=2;x<38;x++)
-            if(((x+y+animFrame)&1)==0)
-                put(BG_B,x,y,T_CHECKER,((x+y)&1)?PAL1:PAL3,0);
+    if(corruption_level == 0)
+        clearPlanes();
+    else
+        dissolve_partial(corruption_level >> 1);
 
-    for(y=17;y<26;y++)
-        for(x=2;x<38;x++)
-            if(((x^y^animFrame)&1)==0)
-                put(BG_B,x,y,T_NOISE,((x+y)&1)?PAL1:PAL2,0);
+    density = 34 + (corruption_level >> 2);
+    if(density > 98)
+        density = 98;
 
-    for(i=0;i<34;i++)
+    entropyMask = (corruption_level > 100) ? 15 : 7;
+
+    for(i=0;i<density;i++)
     {
         x = 2 + (rng() % 36);
         y = 6 + (rng() % 16);
 
-        switch(rng() & 7)
+        switch(rng() & entropyMask)
         {
             case 0: t=T_BAR; break;
             case 1: t=T_BAR_H; break;
@@ -643,18 +700,35 @@ static void v03Glitch(void)
         }
 
         pal = (rng() & 1)?PAL1:PAL3;
-        putFlip(BG_A,x,y,t,pal,1,rng()&1,rng()&1);
+
+        vf = 0;
+        hf = 0;
+
+        if(corruption_level > 150)
+        {
+            vf = rng() & 1;
+            hf = rng() & 1;
+        }
+
+        putFlip(BG_A,x,y,t,pal,1,vf,hf);
     }
 
-    text1("O SINAL ESTA VIVO",11,4);
-    text1("GLITCH CONTROLADO",10,23);
+    if(corruption_level < 200)
+        text1("O SINAL ESTA VIVO",11,4);
+
+    if(corruption_level < 150)
+        text1("GLITCH CONTROLADO",10,23);
 }
 
 static void breath(void)
 {
     u16 x,y,p,t,pal;
     p = animFrame >> 3;
-    clearPlanes();
+
+    if(corruption_level < 50)
+        clearPlanes();
+    else
+        dissolve_partial(corruption_level >> 3);
 
     for(y=7;y<21;y++)
         for(x=5;x<35;x++)
@@ -673,23 +747,94 @@ static void breath(void)
     put(BG_A,20,13,T_BAR,PAL1,1);
     put(BG_A,20,15,T_BAR,PAL1,1);
 
-    text1("BOTOP OBSERVA",13,4);
-    text1("CALMA DENTRO DO RUIDO",8,23);
+    if(corruption_level < 100)
+    {
+        text1("BOTOP OBSERVA",13,4);
+        text1("CALMA DENTRO DO RUIDO",8,23);
+    }
+    else
+    {
+        if((frame & 15) < 12)
+        {
+            text1("BOT.. OBSERV.",13,4);
+            text1("CAL.. DENTRO ..",8,23);
+        }
+    }
 }
+
+static void v03Tunnel(void)
+{
+    u16 x,y,p,t,pal;
+    u16 lines;
+
+    p = animFrame >> 2;
+    clearPlanes();
+
+    for(y=6;y<22;y++)
+        for(x=4;x<36;x++)
+        {
+            if(((x+y+p)&3)==0) t=T_BRACKET;
+            else if(((x^y^p)&7)==0) t=T_DOT;
+            else t=T_NOISE;
+
+            pal = ((x+y+p)&1)?PAL2:PAL3;
+            putFlip(BG_B,x,y,t,pal,0,0,(x&1));
+        }
+
+    lines = VDP_getScreenHeight();
+    if(lines > MAX_LINES)
+        lines = MAX_LINES;
+
+    for(y=0;y<lines;y++)
+    {
+        s16 yy = (s16)y - 112;
+        s16 wave = (s16)((y + (p * 3)) & 31);
+
+        if(wave > 15)
+            wave = 31 - wave;
+
+        if(yy < 0)
+            yy = -yy;
+
+        hscroll[y] = (s16)((wave - 8) * ((yy >> 5) + 1));
+
+        if(corruption_level > 150)
+            hscroll[y] += (s16)(rng() & 7) - 4;
+    }
+
+    VDP_setHorizontalScrollLine(BG_B, 0, hscroll, lines, DMA_QUEUE);
+
+    text1("TUNEL DE SILICIO",11,4);
+    text1("RESPIRA NO PIXEL",10,23);
+}
+
+/* ---------------- HUD / CONTROL ---------------- */
 
 static void drawHUD(void)
 {
-    char s1[8];
-    char s2[8];
+    char spd[6];
+    char scn[7];
+    char cor[8];
 
-    VDP_drawText("        ", 0, 26);
-    VDP_drawText("        ", 0, 27);
+    spd[0] = 'S'; spd[1] = 'P'; spd[2] = 'D'; spd[3] = ' '; spd[4] = '0' + animSpeed; spd[5] = 0;
 
-    sprintf(s1, "SPD %d", animSpeed);
-    sprintf(s2, "SCN %02d", scene + 1);
+    scn[0] = 'S'; scn[1] = 'C'; scn[2] = 'N'; scn[3] = ' ';
+    scn[4] = '0' + ((scene + 1) / 10);
+    scn[5] = '0' + ((scene + 1) % 10);
+    scn[6] = 0;
 
-    VDP_drawText(s1, 0, 26);
-    VDP_drawText(s2, 0, 27);
+    cor[0] = 'C'; cor[1] = 'O'; cor[2] = 'R'; cor[3] = ' ';
+    cor[4] = '0' + ((corruption_level / 100) % 10);
+    cor[5] = '0' + ((corruption_level / 10) % 10);
+    cor[6] = '0' + (corruption_level % 10);
+    cor[7] = 0;
+
+    VDP_drawText("                                        ", 0, 26);
+    VDP_drawText("                                        ", 0, 27);
+
+    VDP_drawText(spd, 0, 26);
+    VDP_drawText(scn, 0, 27);
+    VDP_drawText(cor, 10, 26);
 
     if(autoMode)
         VDP_drawText("AUTO", 35, 26);
@@ -702,6 +847,21 @@ static void drawHUD(void)
         VDP_drawText("HYPER", 34, 27);
     else
         VDP_drawText("     ", 34, 27);
+}
+
+static void drawPauseLife(void)
+{
+    if((frame & 63) < 32)
+    {
+        put(BG_A,19,14,T_DOT,PAL3,1);
+        put(BG_A,20,14,T_CROSS,PAL1,1);
+        put(BG_A,21,14,T_DOT,PAL3,1);
+    }
+
+    if((frame & 31) < 20)
+        text1("SINAL DORMINDO",12,15);
+    else
+        clearTextLine(15);
 }
 
 static void setupScene(u16 s)
@@ -720,7 +880,14 @@ static void nextScene(void)
 
 static void updateScene(void)
 {
-    pulseFlash(animFrame);
+    pulseFlash(paused ? frame : animFrame);
+
+    if(paused)
+    {
+        drawPauseLife();
+        drawHUD();
+        return;
+    }
 
     if(scene == SCENE_V03TUNNEL)
     {
@@ -735,7 +902,13 @@ static void updateScene(void)
         return;
     }
 
-    clearHScroll();
+    if(scene != SCENE_ORACLE &&
+       scene != SCENE_V02 &&
+       scene != SCENE_V03GLITCH &&
+       scene != SCENE_BREATH)
+    {
+        clearHScroll();
+    }
 
     if(scene == SCENE_DREAM) dream();
     else if(scene == SCENE_WAVE) wave();
@@ -750,6 +923,8 @@ static void updateScene(void)
 
     drawHUD();
 }
+
+/* ---------------- MAIN ---------------- */
 
 int main(bool hard)
 {
@@ -780,16 +955,33 @@ int main(bool hard)
         }
         else
         {
-            hyperFlash = (joy & BUTTON_C) ? TRUE : FALSE;
+            if(joy & BUTTON_C)
+            {
+                hyperFlash = TRUE;
+
+                if(corruption_level < 250)
+                    corruption_level += 2;
+                else
+                    corruption_level = 255;
+            }
+            else
+            {
+                hyperFlash = FALSE;
+
+                if(corruption_level > 0)
+                    corruption_level--;
+            }
 
             if(pressed & BUTTON_UP)
             {
-                if(animSpeed < 6) animSpeed++;
+                if(animSpeed < 6)
+                    animSpeed++;
             }
 
             if(pressed & BUTTON_DOWN)
             {
-                if(animSpeed > 1) animSpeed--;
+                if(animSpeed > 1)
+                    animSpeed--;
             }
 
             if(pressed & BUTTON_B)
@@ -799,9 +991,6 @@ int main(bool hard)
                 autoMode = !autoMode;
 
             if(pressed & BUTTON_A)
-                nextScene();
-
-            if((pressed & (BUTTON_X | BUTTON_Y | BUTTON_Z)) != 0)
                 nextScene();
 
             if(autoMode && !paused)
